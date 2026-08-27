@@ -5,6 +5,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -50,6 +51,8 @@ LV_IMG_DECLARE(img_drone);
 #define WORLD_W    800
 #define WORLD_H    400
 #define PATH_PTS   33
+
+static const char *TAG = "ui_map";
 
 static lv_obj_t *s_overlay;
 static lv_point_t s_path[PATH_PTS];
@@ -117,6 +120,9 @@ static const lv_img_dsc_t *load_png(const char *path, uint8_t **data, lv_img_dsc
     }
     uint8_t *raw = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
     if (raw == NULL) {
+        ESP_LOGW(TAG, "%s: no PSRAM for %ld raw bytes (largest block %u)",
+                 path, size,
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         fclose(f);
         return NULL;
     }
@@ -132,18 +138,28 @@ static const lv_img_dsc_t *load_png(const char *path, uint8_t **data, lv_img_dsc
     unsigned rc = lodepng_decode32(&rgba, &w, &h, raw, size);
     free(raw);
     if (rc != 0 || rgba == NULL) {
+        ESP_LOGW(TAG, "%s: decode failed rc=%u (largest PSRAM block %u)",
+                 path, rc,
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         return NULL;
     }
-    uint16_t *px = heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
-    if (px == NULL) {
-        free(rgba);
-        return NULL;
-    }
+    /* Convert inside the decoded buffer rather than into a second one.
+     * Holding 1.28 MB of RGBA and 640 KB of RGB565 at once is what stopped
+     * fitting on the 1024x600 boards once the heap had fragmented, and a
+     * failure here shows up as a black map with nothing logged. Two bytes
+     * written per four consumed always trails the read cursor, so the
+     * rewrite is safe in place. */
+    uint16_t *px = (uint16_t *)rgba;
     for (size_t i = 0; i < (size_t)w * h; i++) {
         const unsigned char *p = rgba + i * 4;
         px[i] = ((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3);
     }
-    free(rgba);
+    /* give the now-unused tail back; shrinking normally keeps the block
+       where it is, and if it cannot, the original stays valid */
+    uint16_t *shrunk = heap_caps_realloc(px, (size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+    if (shrunk != NULL) {
+        px = shrunk;
+    }
 
     *data = (uint8_t *)px;
     dsc->header.always_zero = 0;
@@ -157,7 +173,17 @@ static const lv_img_dsc_t *load_png(const char *path, uint8_t **data, lv_img_dsc
 
 const lv_img_dsc_t *ui_map_get_image(void)
 {
-    return load_png("/assets/map/world.png", &s_map_data, &s_map_dsc);
+    const lv_img_dsc_t *big = load_png("/assets/map/world.png",
+                                       &s_map_data, &s_map_dsc);
+    if (big != NULL) {
+        return big;
+    }
+    /* The big map needs a 1.28 MB contiguous run that is not always there
+     * after hours of tile and logo churn. The 490x245 map costs a quarter
+     * of that and is kept resident across opens, so fall back to it: a
+     * blurry world beats a black screen, and the projection is identical. */
+    ESP_LOGW(TAG, "world.png unavailable, falling back to the small map");
+    return ui_map_get_image_small();
 }
 
 const lv_img_dsc_t *ui_map_get_image_small(void)
@@ -316,9 +342,14 @@ static void build_content(void)
         if (s_view_ok) {
             lv_obj_set_pos(img, 0, MAP_Y);
         } else {
-            lv_img_set_zoom(img, (uint16_t)(world_scale() * 256.0f + 0.5f));
-            lv_obj_set_pos(img, (MAP_W - WORLD_W) / 2,
-                                MAP_Y + (MAP_H - WORLD_H) / 2);
+            /* Size from the image actually handed over: project() works in
+             * the 800x400 space, so the small fallback map is zoomed the
+             * extra WORLD_W/iw to land in exactly the same box. Identical
+             * to the old constant path when the 800x400 map loaded. */
+            int iw = map->header.w, ih = map->header.h;
+            lv_img_set_zoom(img, (uint16_t)(world_scale() * 256.0f *
+                                            WORLD_W / iw + 0.5f));
+            lv_obj_set_pos(img, (MAP_W - iw) / 2, MAP_Y + (MAP_H - ih) / 2);
         }
     }
 
