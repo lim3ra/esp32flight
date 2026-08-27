@@ -190,10 +190,11 @@ Ten supported configurations, all running the same code. The Waveshare 800x480 f
 <summary>ESP-IDF 5.5+, ImageMagick and Node required</summary>
 
 ```sh
-# one-time: fetch airline logos, airports, flags + generate fonts
+# one-time: fetch airline logos, airports, flags, world maps + generate fonts
 ./tools/fetch_logos.sh
 ./tools/fetch_airports.sh
 ./tools/fetch_flags.sh
+./tools/fetch_map.sh
 ./tools/gen_fonts.sh
 
 idf.py set-target esp32s3
