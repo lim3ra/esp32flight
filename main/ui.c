@@ -3092,8 +3092,19 @@ static void retro_map_update(void)
         return;
     }
     if (s_retro_map_buf == NULL) {
-        s_retro_map_buf = heap_caps_malloc((size_t)RADAR_W * RADAR_H * 2,
-                                           MALLOC_CAP_SPIRAM);
+        /* Render resolution, not panel resolution: the source tiles only
+         * exist at RADAR_RENDER_*, so composing at panel size upsampled in
+         * software into a buffer twice as large as needed - 770 KB on a
+         * 1024x600 board, which never fit and left the underlay silently
+         * missing. LVGL applies the same RADAR_K zoom below that the radar
+         * map image already gets. */
+        s_retro_map_buf = heap_caps_malloc(
+            (size_t)RADAR_RENDER_W * RADAR_RENDER_H * 2, MALLOC_CAP_SPIRAM);
+        if (s_retro_map_buf == NULL) {
+            ESP_LOGW(TAG, "retro underlay: no PSRAM for %d bytes (free %u)",
+                     RADAR_RENDER_W * RADAR_RENDER_H * 2,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
     }
     if (s_retro_map_buf == NULL || s_radar_tiles == NULL) {
         return;
@@ -3113,11 +3124,16 @@ static void retro_map_update(void)
      * classes collapse into 5 quantization steps. Tuned offline against
      * the real tiles. Classes: 0 land, 1 water, 2 road, 3 other. */
     const bool unlift = settings_get()->map_light;
-    for (int y = 0; y < RADAR_H; y++) {
-        uint16_t *dst = &s_retro_map_buf[y * RADAR_W];
-        float sy = hy + (y - RADAR_CY) * k;
-        for (int x = 0; x < RADAR_W; x++) {
-            float sx = hx + (x - RADAR_CX) * k;
+    for (int y = 0; y < RADAR_RENDER_H; y++) {
+        uint16_t *dst = &s_retro_map_buf[y * RADAR_RENDER_W];
+        /* Where this row ends up on the panel once LVGL has zoomed the
+         * bitmap about its centre, then the scope's own scaling. Reduces
+         * to the old identity mapping on boards where RADAR_K is 1. */
+        float py = RADAR_H / 2.0f + (y - RADAR_RENDER_H / 2.0f) * RADAR_K;
+        float sy = hy + (py - RADAR_CY) * k;
+        for (int x = 0; x < RADAR_RENDER_W; x++) {
+            float px = RADAR_W / 2.0f + (x - RADAR_RENDER_W / 2.0f) * RADAR_K;
+            float sx = hx + (px - RADAR_CX) * k;
             uint16_t out = 0;
             /* panel space -> tile render space (identity when RADAR_K is 1) */
             int isx = (int)(RADAR_RENDER_W / 2 + (sx - RADAR_W / 2) / RADAR_K);
@@ -3138,14 +3154,14 @@ static void retro_map_update(void)
                                           unlift) == other;
                     }
                 }
-                /* Outlines only. Filling the water, road and label classes
-                 * put a solid green slab behind every place name - the
-                 * glyphs are the brightest thing on a dark_all tile, so a
-                 * voivodeship label came out as a smear rather than text.
-                 * Coastlines, rivers and borders on their own read like an
-                 * actual scope, and cost nothing to leave the rest black. */
                 if (coast) {
                     out = (uint16_t)((12 << 11) | (63 << 5) | 12);   /* mint-hot */
+                } else if (c0 == 1) {
+                    out = (uint16_t)((1 << 11) | (11 << 5) | 1);
+                } else if (c0 == 2) {
+                    out = (uint16_t)((2 << 11) | (17 << 5) | 2);
+                } else if (c0 == 3) {
+                    out = (uint16_t)((1 << 11) | (7 << 5) | 1);
                 }
             }
             dst[x] = out;
@@ -3153,11 +3169,20 @@ static void retro_map_update(void)
     }
     s_retro_map_dsc.header.always_zero = 0;
     s_retro_map_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    s_retro_map_dsc.header.w = RADAR_W;
-    s_retro_map_dsc.header.h = RADAR_H;
+    s_retro_map_dsc.header.w = RADAR_RENDER_W;
+    s_retro_map_dsc.header.h = RADAR_RENDER_H;
     s_retro_map_dsc.data = (const uint8_t *)s_retro_map_buf;
-    s_retro_map_dsc.data_size = (size_t)RADAR_W * RADAR_H * 2;
+    s_retro_map_dsc.data_size = (size_t)RADAR_RENDER_W * RADAR_RENDER_H * 2;
     lv_img_set_src(s_retro_map_img, &s_retro_map_dsc);
+    /* Same treatment the radar view gives its render-sized tile image:
+     * leave the object at the bitmap's own size, keep LVGL's centre pivot
+     * and move the object so the zoomed result lands centred. Setting an
+     * explicit object size here made LVGL repeat the bitmap in stripes. */
+    if (RADAR_W > RADAR_RENDER_W) {
+        lv_img_set_zoom(s_retro_map_img, (uint16_t)(RADAR_K * 256.0f + 0.5f));
+        lv_obj_set_pos(s_retro_map_img, RADAR_W / 2 - RADAR_RENDER_W / 2,
+                       RADAR_H / 2 - RADAR_RENDER_H / 2);
+    }
     lv_obj_clear_flag(s_retro_map_img, LV_OBJ_FLAG_HIDDEN);
     strlcpy(s_retro_map_key, s_radar_key, sizeof(s_retro_map_key));
     ESP_LOGI(TAG, "retro map underlay rebuilt");
