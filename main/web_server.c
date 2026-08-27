@@ -647,6 +647,11 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "airspace_enabled", c->airspace_enabled);
     cJSON_AddStringToObject(root, "openaip_key", c->openaip_key);
     cJSON_AddStringToObject(root, "ais_key", c->ais_key);
+    /* Must be here and not only in the backup snapshot: the panel fills its
+     * form from this response and then POSTs every field back, so a key
+     * missing here comes back as an empty input and wipes the stored one on
+     * the next save. It also feeds the Leaflet layer on the Live tab. */
+    cJSON_AddStringToObject(root, "carto_key", c->carto_key);
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
     cJSON_AddBoolToObject(root, "metar_decoded", c->metar_decoded);
