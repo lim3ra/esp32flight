@@ -3138,14 +3138,14 @@ static void retro_map_update(void)
                                           unlift) == other;
                     }
                 }
+                /* Outlines only. Filling the water, road and label classes
+                 * put a solid green slab behind every place name - the
+                 * glyphs are the brightest thing on a dark_all tile, so a
+                 * voivodeship label came out as a smear rather than text.
+                 * Coastlines, rivers and borders on their own read like an
+                 * actual scope, and cost nothing to leave the rest black. */
                 if (coast) {
                     out = (uint16_t)((12 << 11) | (63 << 5) | 12);   /* mint-hot */
-                } else if (c0 == 1) {
-                    out = (uint16_t)((1 << 11) | (11 << 5) | 1);
-                } else if (c0 == 2) {
-                    out = (uint16_t)((2 << 11) | (17 << 5) | 2);
-                } else if (c0 == 3) {
-                    out = (uint16_t)((1 << 11) | (7 << 5) | 1);
                 }
             }
             dst[x] = out;
