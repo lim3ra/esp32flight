@@ -22,7 +22,6 @@
 #include "alertlog.h"
 #include "settings.h"
 #include "airports.h"
-#include "tilemap.h"
 #include "ui.h"
 #include "ui_settings.h"
 #include "flight_model.h"
@@ -849,15 +848,9 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     set_str_field(root, "openaip_key", c->openaip_key, sizeof(c->openaip_key));
     set_str_field(root, "ais_key", c->ais_key, sizeof(c->ais_key));
-    {
-        char prev[sizeof(c->carto_key)];
-        strlcpy(prev, c->carto_key, sizeof(prev));
-        set_str_field(root, "carto_key", c->carto_key, sizeof(c->carto_key));
-        if (strcmp(prev, c->carto_key) != 0) {
-            /* keyless tiles were cached with a 200 and a watermark on them */
-            tilemap_flush_cache();
-        }
-    }
+    /* no cache flush needed here: this handler restarts the device, and the
+       first render after boot drops tiles fetched with a different key */
+    set_str_field(root, "carto_key", c->carto_key, sizeof(c->carto_key));
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "metric_units")))) {
         c->metric_units = cJSON_IsTrue(j);
     }

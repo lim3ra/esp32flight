@@ -304,17 +304,10 @@ static void ftile_check_center(double lat, double lon)
     }
 }
 
-/* Set from any task when the CARTO key changes; acted on at the start of
- * the next render, where the render mutex is already held. */
-static volatile bool s_cache_flush_pending;
-
-void tilemap_flush_cache(void)
-{
-    s_cache_flush_pending = true;
-}
-
-/* Runs inside the render mutex. */
-static void cache_flush_now(void)
+/* Drop every cached tile PNG. The marker files are kept: they describe the
+ * cache rather than live in it, and losing them would force another wipe on
+ * the next boot. Runs inside the render mutex. */
+static int ftile_wipe(void)
 {
     for (int i = 0; i < TCACHE_N; i++) {
         if (s_tc[i].data != NULL) {
@@ -327,9 +320,8 @@ static void cache_flush_now(void)
         struct dirent *e;
         char path[320];
         while ((e = readdir(d)) != NULL) {
-            /* keep "center": it tracks the home area, not the key, and
-               dropping it would force a needless wipe on the next move */
-            if (strcmp(e->d_name, "center") == 0) {
+            if (strcmp(e->d_name, "center") == 0 ||
+                strcmp(e->d_name, "keyfp") == 0) {
                 continue;
             }
             snprintf(path, sizeof(path), FTILE_DIR "/%s", e->d_name);
@@ -338,7 +330,55 @@ static void cache_flush_now(void)
         }
         closedir(d);
     }
-    ESP_LOGI(TAG, "tile caches flushed (%d flash tiles) after key change", n);
+    return n;
+}
+
+static uint32_t key_fingerprint(const char *s)
+{
+    uint32_t h = 2166136261u;           /* FNV-1a */
+    for (; *s != '\0'; s++) {
+        h = (h ^ (uint8_t)*s) * 16777619u;
+    }
+    return h;
+}
+
+/* Wipe the cached tiles when the CARTO key they were fetched with is not
+ * the one configured now. This has to be durable rather than a flag set at
+ * save time: both settings screens call esp_restart() a few hundred ms after
+ * storing the key, so nothing kept in RAM survives to the next render, and
+ * the watermarked tiles from the keyless era would be served from flash for
+ * good. Checked once per boot, like ftile_check_center. */
+static void ftile_check_key(void)
+{
+    static bool checked;
+    if (checked) {
+        return;
+    }
+    checked = true;
+
+    uint32_t want = key_fingerprint(settings_get()->carto_key);
+    unsigned long have = 0;
+    bool have_ok = false;
+    FILE *f = fopen(FTILE_DIR "/keyfp", "rb");
+    if (f != NULL) {
+        have_ok = fscanf(f, "%lx", &have) == 1;
+        fclose(f);
+    }
+    if (have_ok && (uint32_t)have == want) {
+        return;
+    }
+    int n = ftile_wipe();
+    ESP_LOGI(TAG, "CARTO key changed, dropped %d cached tiles", n);
+
+    f = fopen(FTILE_DIR "/keyfp", "wb");
+    if (f == NULL) {
+        mkdir(FTILE_DIR, 0775);
+        f = fopen(FTILE_DIR "/keyfp", "wb");
+    }
+    if (f != NULL) {
+        fprintf(f, "%08lx", (unsigned long)want);
+        fclose(f);
+    }
 }
 
 /* WGS84 -> normalized web mercator (0..1) */
@@ -632,11 +672,8 @@ static bool render_impl(uint16_t *dst, int dst_w, int dst_h,
                         double lon_min, double lon_max,
                         tile_view_t *out_view, int layers)
 {
-    if (s_cache_flush_pending) {
-        s_cache_flush_pending = false;
-        cache_flush_now();
-    }
     if (layers & TM_LAYER_BASE) {
+        ftile_check_key();
         ftile_check_center((lat_min + lat_max) / 2.0, (lon_min + lon_max) / 2.0);
     }
     /* Re-render of the same area into a live canvas: skip the background

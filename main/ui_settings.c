@@ -18,7 +18,6 @@
 #include "lang.h"
 #include "lvgl_port.h"
 #include "settings.h"
-#include "tilemap.h"
 #include "wifi_mgr.h"
 
 #include "theme.h"
@@ -341,15 +340,9 @@ static void save_cb(lv_event_t *e)
     strlcpy(cfg->ais_key, lv_textarea_get_text(s_ta_ais), sizeof(cfg->ais_key));
     cfg->taf_enabled = lv_obj_has_state(s_sw_taf, LV_STATE_CHECKED);
     strlcpy(cfg->openaip_key, lv_textarea_get_text(s_ta_oaip), sizeof(cfg->openaip_key));
-    {
-        const char *ck = lv_textarea_get_text(s_ta_carto);
-        if (strcmp(cfg->carto_key, ck) != 0) {
-            strlcpy(cfg->carto_key, ck, sizeof(cfg->carto_key));
-            /* the caches are full of watermarked tiles the old keyless
-               requests happily accepted with a 200 */
-            tilemap_flush_cache();
-        }
-    }
+    /* the tile cache notices the changed key by itself on the next boot -
+       which is immediate here, since saving restarts the device */
+    strlcpy(cfg->carto_key, lv_textarea_get_text(s_ta_carto), sizeof(cfg->carto_key));
     cfg->amb_style = (uint8_t)lv_dropdown_get_selected(s_dd_amb_style);
     cfg->map_light = lv_obj_has_state(s_sw_map_light, LV_STATE_CHECKED);
     cfg->retro_map = lv_obj_has_state(s_sw_retro_map, LV_STATE_CHECKED);
