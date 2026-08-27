@@ -67,6 +67,10 @@ static const lang_t k_en = {
     .hint_oaip = "Free key at openaip.net, needed for airspace zones",
     .lbl_ais = "aisstream.io API key",
     .hint_ais = "Free key at aisstream.io, needed for the ship layer",
+    .sec_basemap = "Map tiles",
+    .lbl_carto = "CARTO basemap API key",
+    .hint_carto = "Free key at carto.com/basemaps/apikey - without it the map "
+                  "tiles arrive stamped 'API KEY REQUIRED'",
     .sec_notify = "NOTIFICATIONS", .sec_datasrc = "DATA SOURCES", .sec_smart = "SMART HOME",
     .lm_planes = "Planes", .lm_ships = "Ships", .lm_all = "All",
     .ship_dest = "DESTINATION", .ship_pos = "POSITION",
@@ -167,6 +171,10 @@ static const lang_t k_pl = {
     .hint_oaip = "Darmowy klucz na openaip.net, potrzebny do stref przestrzeni",
     .lbl_ais = "Klucz API aisstream.io",
     .hint_ais = "Darmowy klucz na aisstream.io, potrzebny do warstwy statków",
+    .sec_basemap = "Kafelki mapy",
+    .lbl_carto = "Klucz API CARTO basemaps",
+    .hint_carto = "Darmowy klucz na carto.com/basemaps/apikey - bez niego "
+                  "kafelki mapy przychodzą z napisem 'API KEY REQUIRED'",
     .sec_notify = "POWIADOMIENIA", .sec_datasrc = "ŹRÓDŁA DANYCH", .sec_smart = "SMART HOME",
     .lm_planes = "Samoloty", .lm_ships = "Statki", .lm_all = "Wszystko",
     .ship_dest = "CEL", .ship_pos = "POZYCJA",

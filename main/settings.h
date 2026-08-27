@@ -58,6 +58,8 @@ typedef struct {
     bool    map_light;        /* lift dark map tiles for readability (#10) */
     bool    retro_map;        /* green map underlay on the retro scope */
     uint8_t brightness;       /* backlight, 1-100 % (boards with a dimmer) */
+    char    carto_key[256];   /* CARTO basemap API key; empty = keyless
+                                 requests, which now come back watermarked */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

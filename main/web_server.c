@@ -22,6 +22,7 @@
 #include "alertlog.h"
 #include "settings.h"
 #include "airports.h"
+#include "tilemap.h"
 #include "ui.h"
 #include "ui_settings.h"
 #include "flight_model.h"
@@ -238,6 +239,8 @@ static const char INDEX_HTML[] =
 "<div class='help'>Free account at openaip.net; powers the airspace zone layer.</div></div>"
 "<div><label>aisstream.io API key</label><input id='c_ais_key'>"
 "<div class='help'>Free key at aisstream.io; powers the ship layer.</div></div>"
+"<div><label>CARTO basemap API key</label><input id='c_carto_key'>"
+"<div class='help'>Required since CARTO put the raster basemaps behind a key. Without it every map tile arrives stamped &quot;API KEY REQUIRED&quot;. Free tier at carto.com/basemaps/apikey. Changing it clears the tile caches, so the stamped images are re-fetched.</div></div>"
 "<div><label>Local ADS-B receiver (dump1090/readsb)</label><input id='c_local_adsb' placeholder='http://192.168.1.50:8080/data/aircraft.json'>"
 "<label>Use local receiver</label><select id='c_local_adsb_use'><option value='1'>on</option><option value='0'>off (internet sources)</option></select>"
 "<div class='help'>Reads aircraft straight from your antenna instead of internet APIs; falls back automatically.</div></div>"
@@ -287,6 +290,9 @@ static const char INDEX_HTML[] =
 "</div>"
 "<script>"
 "let map,layer,homeSet=false,routeLine=null,selHex=null,metric=false;"
+"let baseLayer=null,cartoKey='';"
+"function cartoUrl(){return 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'"
+"+(cartoKey?('?key='+encodeURIComponent(cartoKey)):'');}"
 "const grp=v=>String(Math.round(v)).replace(/\\B(?=(\\d{3})+(?!\\d))/g,'\\u2009');"
 "const gst={},alts={};"
 "const ualt=v=>metric?grp(v*0.3048)+' m':grp(v)+' ft';"
@@ -304,7 +310,7 @@ static const char INDEX_HTML[] =
 "function ensureMap(lat,lon,rkm){if(map||typeof L==='undefined')return;"
 "map=L.map('map').setView([lat,lon],8);"
 "map.fitBounds(L.latLng(lat,lon).toBounds(rkm*2000),{padding:[10,10]});"
-"L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',"
+"baseLayer=L.tileLayer(cartoUrl(),"
 "{attribution:'\\u00A9 OSM \\u00B7 CARTO',maxZoom:12}).addTo(map);"
 "L.circle([lat,lon],{radius:rkm*1000,color:'#5dd39e',weight:1,fill:false}).addTo(map);"
 "L.circleMarker([lat,lon],{radius:5,color:'#5dd39e',fillOpacity:1}).addTo(map);"
@@ -440,6 +446,7 @@ static const char INDEX_HTML[] =
 "document.getElementById('bkstat').textContent=r.ok?'restored - device restarting':'restore failed';}"
 "catch(e){document.getElementById('bkstat').textContent='restore failed'}}"
 "async function loadCfg(){try{const r=await fetch('/api/config');const c=await r.json();"
+"cartoKey=c.carto_key||'';if(baseLayer)baseLayer.setUrl(cartoUrl());"
 "tempF=c.temp_f===true;"
 "for(const k in c){const el=document.getElementById('c_'+k);if(!el)continue;"
 "if(el.tagName==='SELECT')el.value=(c[k]===true||c[k]===1||c[k]==='1')?1:( +c[k]||0);else el.value=c[k];}"
@@ -451,7 +458,7 @@ static const char INDEX_HTML[] =
 "favs=(c.favs||[]).map(f=>f&&f.name?f:{});favRender();"
 "document.getElementById('cfgsave').disabled=false;}catch(e){}}"
 "async function saveCfg(){const c={};"
-"['ssid','pass','web_pass','ntfy_topic','mqtt_uri','fa_key','watch_regs','webhook_url','local_adsb','filter_airport','openaip_key','ais_key'].forEach(k=>{const v=document.getElementById('c_'+k).value;if((k!=='pass'&&k!=='web_pass')||v)c[k]=v;});"
+"['ssid','pass','web_pass','ntfy_topic','mqtt_uri','fa_key','watch_regs','webhook_url','local_adsb','filter_airport','openaip_key','ais_key','carto_key'].forEach(k=>{const v=document.getElementById('c_'+k).value;if((k!=='pass'&&k!=='web_pass')||v)c[k]=v;});"
 "c.cpa_alerts=document.getElementById('c_cpa_alerts').value==='1';"
 "c.cpa_all=document.getElementById('c_cpa_all').value==='1';"
 "c.filter_apt_exclude=document.getElementById('c_filter_apt_exclude').value==='1';"
@@ -691,6 +698,7 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "filter_airport", c->filter_airport);
     cJSON_AddStringToObject(root, "openaip_key", c->openaip_key);
     cJSON_AddStringToObject(root, "ais_key", c->ais_key);
+    cJSON_AddStringToObject(root, "carto_key", c->carto_key);
     cJSON_AddBoolToObject(root, "fixed", c->use_fixed_loc);
     cJSON_AddNumberToObject(root, "lat", c->lat);
     cJSON_AddNumberToObject(root, "lon", c->lon);
@@ -841,6 +849,15 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     set_str_field(root, "openaip_key", c->openaip_key, sizeof(c->openaip_key));
     set_str_field(root, "ais_key", c->ais_key, sizeof(c->ais_key));
+    {
+        char prev[sizeof(c->carto_key)];
+        strlcpy(prev, c->carto_key, sizeof(prev));
+        set_str_field(root, "carto_key", c->carto_key, sizeof(c->carto_key));
+        if (strcmp(prev, c->carto_key) != 0) {
+            /* keyless tiles were cached with a 200 and a watermark on them */
+            tilemap_flush_cache();
+        }
+    }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "metric_units")))) {
         c->metric_units = cJSON_IsTrue(j);
     }

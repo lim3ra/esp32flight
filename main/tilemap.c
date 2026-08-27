@@ -67,6 +67,8 @@ void tilemap_init(void)
 #define TILE_PX     256
 #define MAX_ZOOM    11
 #define TILE_BUF    (96 * 1024)
+/* tile URL + the "?key=" suffix for a 255-char CARTO key */
+#define TILE_URL_MAX 352
 
 /* LRU cache of compressed tile PNGs in PSRAM: repeat map opens render
  * instantly and survive short network outages. Guarded by s_render_mux
@@ -302,6 +304,43 @@ static void ftile_check_center(double lat, double lon)
     }
 }
 
+/* Set from any task when the CARTO key changes; acted on at the start of
+ * the next render, where the render mutex is already held. */
+static volatile bool s_cache_flush_pending;
+
+void tilemap_flush_cache(void)
+{
+    s_cache_flush_pending = true;
+}
+
+/* Runs inside the render mutex. */
+static void cache_flush_now(void)
+{
+    for (int i = 0; i < TCACHE_N; i++) {
+        if (s_tc[i].data != NULL) {
+            tcache_drop(i);
+        }
+    }
+    DIR *d = opendir(FTILE_DIR);
+    int n = 0;
+    if (d != NULL) {
+        struct dirent *e;
+        char path[320];
+        while ((e = readdir(d)) != NULL) {
+            /* keep "center": it tracks the home area, not the key, and
+               dropping it would force a needless wipe on the next move */
+            if (strcmp(e->d_name, "center") == 0) {
+                continue;
+            }
+            snprintf(path, sizeof(path), FTILE_DIR "/%s", e->d_name);
+            unlink(path);
+            n++;
+        }
+        closedir(d);
+    }
+    ESP_LOGI(TAG, "tile caches flushed (%d flash tiles) after key change", n);
+}
+
 /* WGS84 -> normalized web mercator (0..1) */
 static void merc_norm(double lat, double lon, double *nx, double *ny)
 {
@@ -380,9 +419,14 @@ static bool blit_tile(esp_http_client_handle_t client, tile_sink_t *sink,
     }
 
     if (!from_cache) {
-        char url[96];
+        /* CARTO requires a key on the raster basemaps. A keyless request
+         * still answers 200 - the PNG just has "API KEY REQUIRED" burned
+         * into it - so there is nothing here to detect by status code. */
+        const char *ckey = settings_get()->carto_key;
+        char url[TILE_URL_MAX];
         snprintf(url, sizeof(url),
-                 "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png", z, tx, ty);
+                 "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png%s%s",
+                 z, tx, ty, ckey[0] != '\0' ? "?key=" : "", ckey);
         sink->len = 0;
         esp_http_client_set_url(client, url);
         esp_err_t err = esp_http_client_perform(client);
@@ -588,6 +632,10 @@ static bool render_impl(uint16_t *dst, int dst_w, int dst_h,
                         double lon_min, double lon_max,
                         tile_view_t *out_view, int layers)
 {
+    if (s_cache_flush_pending) {
+        s_cache_flush_pending = false;
+        cache_flush_now();
+    }
     if (layers & TM_LAYER_BASE) {
         ftile_check_center((lat_min + lat_max) / 2.0, (lon_min + lon_max) / 2.0);
     }

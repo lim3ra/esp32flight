@@ -18,6 +18,14 @@ typedef struct {
  * shared tile worker task). */
 void tilemap_init(void);
 
+/* Drop every cached base tile, in PSRAM and on flash. Call after the CARTO
+ * API key changes: keyless requests answer 200 with "API KEY REQUIRED"
+ * stamped into the PNG, so the caches happily hold unusable images that no
+ * status check would ever have rejected. Safe to call from any task - the
+ * purge itself runs at the start of the next render, under the render
+ * mutex. */
+void tilemap_flush_cache(void);
+
 /* One persistent worker replaces the per-view spawn-and-die render tasks:
  * five task types used to allocate 10 KB internal stacks at arbitrary
  * times and fragment the internal heap (observed: spawn failures under

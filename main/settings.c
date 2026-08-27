@@ -64,6 +64,7 @@ void settings_load(void)
     s_settings.airspace_enabled = false;
     s_settings.openaip_key[0] = '\0';
     s_settings.ais_key[0] = '\0';
+    s_settings.carto_key[0] = '\0';
     s_settings.metric_units = false;
     s_settings.metar_decoded = false;
     s_settings.follow_mode = false;
@@ -193,6 +194,7 @@ void settings_load(void)
     }
     get_str(h, "oaipkey", s_settings.openaip_key, sizeof(s_settings.openaip_key));
     get_str(h, "aiskey", s_settings.ais_key, sizeof(s_settings.ais_key));
+    get_str(h, "cartokey", s_settings.carto_key, sizeof(s_settings.carto_key));
     if (nvs_get_u8(h, "metric", &b8) == ESP_OK) {
         s_settings.metric_units = b8 != 0;
     }
@@ -281,6 +283,7 @@ esp_err_t settings_save(void)
     nvs_set_u8(h, "airsp", s_settings.airspace_enabled ? 1 : 0);
     nvs_set_str(h, "oaipkey", s_settings.openaip_key);
     nvs_set_str(h, "aiskey", s_settings.ais_key);
+    nvs_set_str(h, "cartokey", s_settings.carto_key);
     nvs_set_u8(h, "metric", s_settings.metric_units ? 1 : 0);
     nvs_set_u8(h, "mdec", s_settings.metar_decoded ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);
