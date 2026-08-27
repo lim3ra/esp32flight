@@ -2725,11 +2725,15 @@ static void amb_show(void)
     }
     s_amb_retro = settings_get()->amb_style == 1 && s_retro_panel != NULL;
     if (s_amb_retro) {
-        /* CRT bezel: black screen, the retro scope centered on it */
+        /* Full-screen scope. The panel is narrower than the display and
+         * keeps its own dark green, so a black backdrop framed it as a
+         * visible rectangle with 155 px of bezel either side; painting the
+         * backdrop in the same colour makes the whole screen read as one
+         * surface with the scope drawn on it. */
         s_amb = lv_obj_create(lv_layer_top());
         lv_obj_set_size(s_amb, SCR_W, SCR_H);
         lv_obj_set_pos(s_amb, 0, 0);
-        lv_obj_set_style_bg_color(s_amb, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_amb, RET_COL_BG, 0);
         lv_obj_set_style_border_width(s_amb, 0, 0);
         lv_obj_set_style_radius(s_amb, 0, 0);
         lv_obj_set_style_pad_all(s_amb, 0, 0);
