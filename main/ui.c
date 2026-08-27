@@ -2832,6 +2832,53 @@ static void amb_show(void)
     render_ambient();
 }
 
+/* Keep the Home Assistant switch in step with the screensaver, which also
+ * comes up on its own after the idle timeout and goes away on a tap. */
+static void amb_report_state(void)
+{
+    static int reported = -1;
+    int now = s_amb != NULL ? 1 : 0;
+    if (now != reported) {
+        reported = now;
+        mqtt_pub_screensaver_state(now != 0);
+    }
+}
+
+void ui_next_view(void)
+{
+    if (!lvgl_port_lock(200 / portTICK_PERIOD_MS)) {
+        return;
+    }
+    /* Drop the screensaver first. It covers the panels, so the switch would
+     * otherwise happen invisibly underneath - and in retro style it has
+     * adopted the scope panel, which apply_view must not fight over. */
+    amb_close();
+    apply_view(s_view_mode + 1);
+    amb_report_state();
+    lvgl_port_unlock();
+}
+
+void ui_set_screensaver(bool on)
+{
+    if (!lvgl_port_lock(200 / portTICK_PERIOD_MS)) {
+        return;
+    }
+    if (on) {
+        amb_show();     /* no-op when already up */
+    } else {
+        amb_close();    /* no-op when not up */
+    }
+    /* report what actually happened: amb_show can decline when PSRAM has
+       no room left for the canvas */
+    amb_report_state();
+    lvgl_port_unlock();
+}
+
+bool ui_screensaver_active(void)
+{
+    return s_amb != NULL;
+}
+
 /* idle watcher: screensaver + night backlight */
 static void idle_timer_cb(lv_timer_t *t)
 {
@@ -2891,6 +2938,10 @@ static void idle_timer_cb(lv_timer_t *t)
             bl_apply(true);
         }
     }
+
+    /* Catches every screensaver change this timer did not make itself:
+       the idle trigger above, and a tap that dismissed it. */
+    amb_report_state();
 
     /* A Home Assistant brightness slider sends a burst of values: persist
      * only once the value has been still for a tick, so one drag costs one

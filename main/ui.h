@@ -39,6 +39,15 @@ const char *ui_update_tag(void);
 void ui_set_backlight(bool on, int pct);
 bool ui_backlight_on(void);
 
+/* Step the right-hand panel to the next view, exactly like the on-screen
+ * mode button. Also safe to call from any task - it takes the LVGL lock
+ * itself and gives up rather than block if the UI is busy. */
+void ui_next_view(void);
+
+/* Show or dismiss the map screensaver on demand, same conditions. */
+void ui_set_screensaver(bool on);
+bool ui_screensaver_active(void);
+
 /* Home coordinates (after geolocation) - used by the radar map view. */
 void ui_set_home(double lat, double lon);
 

@@ -15,6 +15,9 @@ static const char *TAG = "mqtt";
 #define STATE_TOPIC       "esp32flight/state"
 #define LIGHT_STATE_TOPIC "esp32flight/light/backlight/state"
 #define LIGHT_CMD_TOPIC   "esp32flight/light/backlight/set"
+#define NEXT_VIEW_TOPIC   "esp32flight/button/next_view/press"
+#define SAVER_STATE_TOPIC "esp32flight/switch/screensaver/state"
+#define SAVER_CMD_TOPIC   "esp32flight/switch/screensaver/set"
 
 #define DEVICE_JSON \
     "\"device\":{\"identifiers\":[\"esp32flight\"]," \
@@ -64,6 +67,33 @@ static void publish_discovery(void)
                             "\"command_topic\":\"" LIGHT_CMD_TOPIC "\","
                             "\"unique_id\":\"esp32flight_backlight\","
                             DEVICE_JSON "}", 0, 1, 1);
+
+    /* Stepping the panel is an action with no state to report, so it is a
+     * button rather than a switch - a switch would need an on/off that
+     * means nothing here and would stick in whichever position was used
+     * last. */
+    esp_mqtt_client_publish(s_client,
+                            "homeassistant/button/esp32flight_next_view/config",
+                            "{\"name\":\"Next panel\","
+                            "\"command_topic\":\"" NEXT_VIEW_TOPIC "\","
+                            "\"unique_id\":\"esp32flight_next_view\","
+                            "\"icon\":\"mdi:page-next-outline\","
+                            DEVICE_JSON "}", 0, 1, 1);
+
+    esp_mqtt_client_publish(s_client,
+                            "homeassistant/switch/esp32flight_screensaver/config",
+                            "{\"name\":\"Screensaver\","
+                            "\"command_topic\":\"" SAVER_CMD_TOPIC "\","
+                            "\"state_topic\":\"" SAVER_STATE_TOPIC "\","
+                            "\"unique_id\":\"esp32flight_screensaver\","
+                            "\"icon\":\"mdi:monitor-screenshot\","
+                            DEVICE_JSON "}", 0, 1, 1);
+}
+
+static bool topic_is(esp_mqtt_event_handle_t ev, const char *topic)
+{
+    return ev->topic_len == (int)strlen(topic) &&
+           strncmp(ev->topic, topic, (size_t)ev->topic_len) == 0;
 }
 
 /* {"state":"ON","brightness":128} - brightness is optional, and the plain
@@ -110,13 +140,25 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
         ESP_LOGI(TAG, "connected");
         publish_discovery();
         esp_mqtt_client_subscribe(s_client, LIGHT_CMD_TOPIC, 1);
+        esp_mqtt_client_subscribe(s_client, NEXT_VIEW_TOPIC, 1);
+        esp_mqtt_client_subscribe(s_client, SAVER_CMD_TOPIC, 1);
         mqtt_pub_light_state(ui_backlight_on(), settings_get()->brightness);
+        mqtt_pub_screensaver_state(ui_screensaver_active());
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         s_connected = false;
-    } else if (event_id == MQTT_EVENT_DATA && ev != NULL &&
-               ev->topic_len == (int)strlen(LIGHT_CMD_TOPIC) &&
-               strncmp(ev->topic, LIGHT_CMD_TOPIC, (size_t)ev->topic_len) == 0) {
-        handle_light_cmd(ev->data, ev->data_len);
+    } else if (event_id == MQTT_EVENT_DATA && ev != NULL) {
+        if (topic_is(ev, LIGHT_CMD_TOPIC)) {
+            handle_light_cmd(ev->data, ev->data_len);
+        } else if (topic_is(ev, NEXT_VIEW_TOPIC)) {
+            /* a button carries no meaningful payload - arriving is the event */
+            ESP_LOGI(TAG, "next panel");
+            ui_next_view();
+        } else if (topic_is(ev, SAVER_CMD_TOPIC)) {
+            bool on = ev->data_len >= 2 &&
+                      strncasecmp(ev->data, "ON", 2) == 0;
+            ESP_LOGI(TAG, "screensaver %s", on ? "on" : "off");
+            ui_set_screensaver(on);
+        }
     }
 }
 
@@ -167,4 +209,15 @@ void mqtt_pub_light_state(bool on, int pct)
      * the MQTT event handler, and a queued QoS 1 publish can deadlock
      * there. */
     esp_mqtt_client_publish(s_client, LIGHT_STATE_TOPIC, payload, 0, 0, 1);
+}
+
+void mqtt_pub_screensaver_state(bool on)
+{
+    if (s_client == NULL || !s_connected) {
+        return;
+    }
+    /* QoS 0 for the same reason as the light state: this can run from
+     * inside the MQTT event handler when a command echoes back. */
+    esp_mqtt_client_publish(s_client, SAVER_STATE_TOPIC,
+                            on ? "ON" : "OFF", 0, 0, 1);
 }
