@@ -226,6 +226,8 @@ static const char INDEX_HTML[] =
 "<div><label>Night hours</label><select id='c_night_auto'><option value='0'>fixed hours below</option><option value='1'>auto: sunset to sunrise</option></select></div>"
 "<div><label>Night from</label><input id='c_night_start' type='time'></div>"
 "<div><label>Night until</label><input id='c_night_end' type='time'></div>"
+"<div><label>Brightness (%)</label><input id='c_brightness' type='number' min='1' max='100'>"
+"<div class='help'>Backlight level on boards with a dimmer (7B, 7C, CrowPanel Advance, Tab5). Home Assistant can also set it live over MQTT.</div></div>"
 "</div></div>"
 "<div class='cfgcard'><h4>Integrations</h4><div class='grid2'>"
 "<div><label>MQTT broker (Home Assistant)</label><input id='c_mqtt_uri' placeholder='mqtt://user:pass@192.168.1.10:1883'>"
@@ -459,6 +461,7 @@ static const char INDEX_HTML[] =
 "c.alt_min_ft=+document.getElementById('c_alt_min_ft').value;c.alt_max_ft=+document.getElementById('c_alt_max_ft').value;"
 "const pm=id=>{const v=document.getElementById(id).value.split(':');return (+v[0])*60+(+v[1]||0);};"
 "c.night_start_min=pm('c_night_start');c.night_end_min=pm('c_night_end');"
+"c.brightness=+document.getElementById('c_brightness').value;"
 "c.fixed=document.getElementById('c_fixed').value==='1';"
 "c.hide_ground=document.getElementById('c_hide_ground').value==='1';"
 "c.show_classes=0;for(let i=0;i<5;i++)if(document.getElementById('c_cls'+i).checked)c.show_classes|=1<<i;"
@@ -603,6 +606,7 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "lat", c->lat);
     cJSON_AddNumberToObject(root, "lon", c->lon);
     cJSON_AddNumberToObject(root, "radius_nm", c->radius_nm);
+    cJSON_AddNumberToObject(root, "brightness", c->brightness);
     cJSON_AddBoolToObject(root, "hide_ground", c->hide_ground);
     cJSON_AddNumberToObject(root, "show_classes", c->show_classes);
     cJSON_AddBoolToObject(root, "rain_overlay", c->rain_overlay);
@@ -691,6 +695,7 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "lat", c->lat);
     cJSON_AddNumberToObject(root, "lon", c->lon);
     cJSON_AddNumberToObject(root, "radius_nm", c->radius_nm);
+    cJSON_AddNumberToObject(root, "brightness", c->brightness);
     cJSON_AddNumberToObject(root, "theme", c->theme);
     cJSON_AddNumberToObject(root, "lang", c->lang);
     cJSON_AddBoolToObject(root, "rain_overlay", c->rain_overlay);
@@ -879,6 +884,14 @@ static esp_err_t config_post(httpd_req_t *req)
         int r = (int)j->valuedouble;
         if (r >= 1 && r <= 250) {
             c->radius_nm = r;
+        }
+    }
+    if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "brightness")))) {
+        int b = (int)j->valuedouble;
+        if (b >= 1 && b <= 100) {
+            /* apply before the restart below, so the panel reacts while
+             * the "saved" message is still on screen */
+            ui_set_backlight(true, b);
         }
     }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "theme")))) {

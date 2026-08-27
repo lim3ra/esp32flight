@@ -49,7 +49,9 @@ void app_main(void)
     settings_load();
 
     ESP_ERROR_CHECK(waveshare_esp32_s3_rgb_lcd_init());
-    waveshare_rgb_lcd_bl_on();
+    /* settings_load ran above, so the panel comes up at the saved
+     * brightness instead of flashing full bright first. */
+    waveshare_rgb_lcd_bl_set(settings_get()->brightness);
 
     logos_init();
     airports_init();

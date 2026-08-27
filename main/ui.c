@@ -34,6 +34,7 @@
 #include "tz.h"
 #include "ui_map.h"
 #include "ui_settings.h"
+#include "mqtt_pub.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -223,7 +224,15 @@ static int64_t s_amb_last_try;
 static float s_amb_scale = 1.0f;   /* upscale so the radius circle fills the height */
 static int s_amb_px, s_amb_py;     /* scale pivot: home position in map pixels */
 static char s_weather_txt[96];
+/* Backlight ownership: the panel goes dark either because the night window
+ * closed it (s_bl_off alone) or because MQTT / the web panel asked for it
+ * (s_bl_forced_off). A touch beats both - a screen that cannot be woken by
+ * tapping is a brick. */
 static bool s_bl_off;
+static bool s_bl_forced_off;
+static uint32_t s_bl_forced_at_ms;
+static bool s_bright_dirty;        /* brightness changed, not yet in NVS */
+static uint8_t s_bright_last_seen;
 
 static lv_obj_t *s_stats_panel;
 static lv_obj_t *s_sv_vals[4];
@@ -2638,11 +2647,42 @@ static void amb_close(void)
     }
 }
 
+/* The single point where the panel light changes: keeps the driver, the
+ * dark/lit flag and the Home Assistant light entity in step. */
+static void bl_apply(bool on)
+{
+    const settings_t *cfg = settings_get();
+    if (on) {
+        waveshare_rgb_lcd_bl_set(cfg->brightness);
+    } else {
+        waveshare_rgb_lcd_bl_off();
+    }
+    s_bl_off = !on;
+    mqtt_pub_light_state(on, cfg->brightness);
+}
+
+void ui_set_backlight(bool on, int pct)
+{
+    settings_t *cfg = settings_get();
+    if (pct >= 1 && pct <= 100 && cfg->brightness != (uint8_t)pct) {
+        cfg->brightness = (uint8_t)pct;
+        s_bright_dirty = true;      /* idle_timer_cb persists it, debounced */
+    }
+    s_bl_forced_off = !on;
+    s_bl_forced_at_ms = lv_tick_get();
+    bl_apply(on);
+}
+
+bool ui_backlight_on(void)
+{
+    return !s_bl_off;
+}
+
 static void amb_click_cb(lv_event_t *e)
 {
     if (s_bl_off) {
-        waveshare_rgb_lcd_bl_on();
-        s_bl_off = false;
+        s_bl_forced_off = false;
+        bl_apply(true);
         return;     /* first tap only wakes the screen */
     }
     /* tap on (near) a plane selects it and shows its bubble;
@@ -2823,25 +2863,45 @@ static void idle_timer_cb(lv_timer_t *t)
             bool night = a <= b ? (m >= a && m < b) : (m >= a || m < b);
             if (night && !s_bl_off && s_amb != NULL &&
                 idle_ms > (uint32_t)(cfg->ambient_idle_min + 5) * 60000U) {
-                waveshare_rgb_lcd_bl_off();
-                s_bl_off = true;
-            } else if (!night && s_bl_off) {
+                bl_apply(false);
+            } else if (!night && s_bl_off && !s_bl_forced_off) {
                 /* Morning restore must NOT require the screensaver to still
                  * be up: a tap in the dark can close it invisibly, and the
                  * old gate then kept the panel black past sunrise (7B
-                 * owner report) until a reboot. */
-                waveshare_rgb_lcd_bl_on();
-                s_bl_off = false;
+                 * owner report) until a reboot. A panel switched off from
+                 * Home Assistant is left alone here - that one is undone by
+                 * a touch or an explicit on, never by the clock. */
+                bl_apply(true);
             }
         }
     }
 
     /* Safety net alongside the screensaver's tap-to-wake: any recent input
      * while dark relights the panel (this timer runs every 10 s), and so
-     * does disabling night mode from the web panel while dark. */
-    if (s_bl_off && (idle_ms < 11000U || !cfg->night_enabled)) {
-        waveshare_rgb_lcd_bl_on();
-        s_bl_off = false;
+     * does disabling night mode from the web panel while dark. The touch
+     * only counts when it landed after the off command - otherwise an
+     * "off" from Home Assistant would be undone by the tap that preceded
+     * it. */
+    if (s_bl_off) {
+        uint32_t now = lv_tick_get();
+        bool touched = idle_ms < 11000U &&
+                       (int32_t)((now - idle_ms) - s_bl_forced_at_ms) > 0;
+        if (touched || (!cfg->night_enabled && !s_bl_forced_off)) {
+            s_bl_forced_off = false;
+            bl_apply(true);
+        }
+    }
+
+    /* A Home Assistant brightness slider sends a burst of values: persist
+     * only once the value has been still for a tick, so one drag costs one
+     * NVS write instead of thirty. */
+    if (s_bright_dirty) {
+        if (cfg->brightness == s_bright_last_seen) {
+            s_bright_dirty = false;
+            settings_save();
+        } else {
+            s_bright_last_seen = cfg->brightness;
+        }
     }
 }
 

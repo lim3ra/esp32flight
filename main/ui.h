@@ -31,6 +31,14 @@ void ui_set_update_available(bool available, const char *tag);
 bool ui_update_available(void);
 const char *ui_update_tag(void);
 
+/* Backlight control shared by the touch UI, the web panel and MQTT.
+ * pct 1-100 sets the brightness (0 = keep the current one); on=false
+ * blacks the panel out until a touch or an explicit on. Unlike the rest
+ * of ui_*, these two are safe to call from any task - they touch no LVGL
+ * object, only the panel driver. */
+void ui_set_backlight(bool on, int pct);
+bool ui_backlight_on(void);
+
 /* Home coordinates (after geolocation) - used by the radar map view. */
 void ui_set_home(double lat, double lon);
 

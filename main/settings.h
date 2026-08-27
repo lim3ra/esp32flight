@@ -57,6 +57,7 @@ typedef struct {
     double  fav_lat[3], fav_lon[3];
     bool    map_light;        /* lift dark map tiles for readability (#10) */
     bool    retro_map;        /* green map underlay on the retro scope */
+    uint8_t brightness;       /* backlight, 1-100 % (boards with a dimmer) */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

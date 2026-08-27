@@ -698,3 +698,29 @@ esp_err_t waveshare_rgb_lcd_bl_off(void)
     ch422g_write(0x24, 0x01);
     return ch422g_write(0x38, 0x1A);
 }
+
+esp_err_t waveshare_rgb_lcd_bl_set(int pct)
+{
+    if (pct < 0) {
+        pct = 0;
+    }
+    if (pct > 100) {
+        pct = 100;
+    }
+    if (s_board->has_stc8) {
+        /* one raw byte: 0 = brightest .. 244 = dimmest, 245 = off */
+        return stc8_write(pct == 0 ? 245 : (uint8_t)(244 - pct * 244 / 100));
+    }
+    if (s_board->has_ch32v003) {
+        if (pct > 0) {
+            ch32v003_output(2, 1);
+        }
+        /* PWM 0 is fully dark on its own; the enable line deliberately
+         * stays up (see waveshare_rgb_lcd_bl_off - dropping it takes the
+         * touch controller down with the backlight). */
+        ch32v003_backlight_pct(pct);
+        return ESP_OK;
+    }
+    /* No dimmer on this board: anything above zero is full on. */
+    return pct > 0 ? waveshare_rgb_lcd_bl_on() : waveshare_rgb_lcd_bl_off();
+}

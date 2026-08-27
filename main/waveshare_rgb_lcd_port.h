@@ -68,6 +68,11 @@ const char *waveshare_lcd_board_name(void);
 esp_err_t waveshare_rgb_lcd_bl_on(void);
 esp_err_t waveshare_rgb_lcd_bl_off(void);
 
+/* Panel brightness, 0-100 %. Boards with a real dimmer (the 7B/7C helper
+ * MCU, the CrowPanel Advance STC8, the LEDC backlights) follow the value;
+ * the rest treat anything above 0 as full on. */
+esp_err_t waveshare_rgb_lcd_bl_set(int pct);
+
 /* First RGB frame buffer (800x480 RGB565 in PSRAM), NULL before init. */
 void *waveshare_lcd_get_fb(void);
 

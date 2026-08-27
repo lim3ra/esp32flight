@@ -43,6 +43,7 @@ static lv_obj_t *s_dd_networks, *s_dd_cities, *s_dd_theme, *s_dd_lang;
 static lv_obj_t *s_sw_auto, *s_sw_ground, *s_sw_cpa, *s_sw_night;
 static lv_obj_t *s_sw_cls[FCLS_COUNT];
 static lv_obj_t *s_sw_rain;
+static lv_obj_t *s_slider_bright, *s_bright_label;
 static lv_obj_t *s_sw_airsp, *s_sw_iss, *s_sw_sonde, *s_sw_ships, *s_sw_taf;
 static lv_obj_t *s_ta_oaip, *s_ta_ais;
 static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle, *s_sw_nauto;
@@ -240,6 +241,18 @@ static void radius_cb(lv_event_t *e)
     lv_label_set_text(s_radius_label, buf);
 }
 
+static void brightness_cb(lv_event_t *e)
+{
+    (void)e;
+    int pct = lv_slider_get_value(s_slider_bright);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d %%", pct);
+    lv_label_set_text(s_bright_label, buf);
+    /* live preview: the panel dims as the slider moves, so the value is
+     * picked by eye instead of by number */
+    ui_set_backlight(true, pct);
+}
+
 static void ota_unlock_cb(lv_event_t *e)
 {
     settings_get()->ota_enabled =
@@ -318,6 +331,7 @@ static void save_cb(lv_event_t *e)
              cfg->night_end_min / 60, cfg->night_end_min % 60);
     lv_textarea_set_text(s_ta_night_to, hhmm);
     cfg->ambient_idle_min = atoi(lv_textarea_get_text(s_ta_amb_idle));
+    cfg->brightness = (uint8_t)lv_slider_get_value(s_slider_bright);
     cfg->rain_overlay = lv_obj_has_state(s_sw_rain, LV_STATE_CHECKED);
     cfg->airspace_enabled = lv_obj_has_state(s_sw_airsp, LV_STATE_CHECKED);
     cfg->iss_enabled = lv_obj_has_state(s_sw_iss, LV_STATE_CHECKED);
@@ -716,6 +730,19 @@ void ui_settings_open(void)
     snprintf(buf, sizeof(buf), "%02d:%02d", cfg->night_end_min / 60, cfg->night_end_min % 60);
     s_ta_night_to = add_textarea(p, 510, 252, 110, buf, false);
     s_sw_nauto = add_switch(p, L()->night_auto_lbl, 0, 306, cfg->night_auto);
+    add_label(p, L()->brightness_lbl, 380, 300);
+    s_slider_bright = lv_slider_create(p);
+    lv_obj_set_size(s_slider_bright, UISX(240), UISY(16));
+    lv_obj_set_pos(s_slider_bright, UISX(380), UISY(332));
+    /* floor at 5 %: a slider dragged to zero leaves a black screen with no
+     * way back to itself */
+    lv_slider_set_range(s_slider_bright, 5, 100);
+    lv_slider_set_value(s_slider_bright, cfg->brightness, LV_ANIM_OFF);
+    lv_obj_add_event_cb(s_slider_bright, brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_bright_label = add_label(p, "", 640, 328);
+    lv_obj_set_style_text_color(s_bright_label, COL_TEXT, 0);
+    snprintf(buf, sizeof(buf), "%d %%", cfg->brightness);
+    lv_label_set_text(s_bright_label, buf);
     s_sw_cycle = add_switch(p, L()->follow_lbl, 0, 358, !cfg->follow_mode);
     add_label(p, L()->amb_idle_lbl, 0, 416);
     snprintf(buf, sizeof(buf), "%d", cfg->ambient_idle_min);

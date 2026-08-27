@@ -68,6 +68,9 @@ void settings_load(void)
     s_settings.metar_decoded = false;
     s_settings.follow_mode = false;
     s_settings.night_auto = false;
+    /* 90 %, the value the 7B vendor driver used before the panel became
+     * dimmable from the UI - unchanged brightness after an update. */
+    s_settings.brightness = 90;
     memset(s_settings.fav_name, 0, sizeof(s_settings.fav_name));
 
     nvs_handle_t h;
@@ -202,6 +205,9 @@ void settings_load(void)
     if (nvs_get_u8(h, "nauto", &b8) == ESP_OK) {
         s_settings.night_auto = b8 != 0;
     }
+    if (nvs_get_u8(h, "bright", &b8) == ESP_OK && b8 >= 1 && b8 <= 100) {
+        s_settings.brightness = b8;
+    }
     for (int f = 0; f < 3; f++) {
         char key[12], val[64] = "";
         snprintf(key, sizeof(key), "fav%d", f);
@@ -279,6 +285,7 @@ esp_err_t settings_save(void)
     nvs_set_u8(h, "mdec", s_settings.metar_decoded ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);
     nvs_set_u8(h, "nauto", s_settings.night_auto ? 1 : 0);
+    nvs_set_u8(h, "bright", s_settings.brightness);
     for (int f = 0; f < 3; f++) {
         char key[12], val[64];
         snprintf(key, sizeof(key), "fav%d", f);

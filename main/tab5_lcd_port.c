@@ -223,6 +223,18 @@ esp_err_t waveshare_rgb_lcd_bl_off(void)
     return ledc_update_duty(LEDC_LOW_SPEED_MODE, TAB5_LEDC_CH);
 }
 
+esp_err_t waveshare_rgb_lcd_bl_set(int pct)
+{
+    if (pct < 0) {
+        pct = 0;
+    }
+    if (pct > 100) {
+        pct = 100;
+    }
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, TAB5_LEDC_CH, (uint32_t)pct * 4095 / 100);
+    return ledc_update_duty(LEDC_LOW_SPEED_MODE, TAB5_LEDC_CH);
+}
+
 /* ---------- DSI panel ---------- */
 
 static IRAM_ATTR bool trans_done_cb(esp_lcd_panel_handle_t panel,
