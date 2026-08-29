@@ -65,6 +65,15 @@ void settings_load(void)
     s_settings.openaip_key[0] = '\0';
     s_settings.ais_key[0] = '\0';
     s_settings.carto_key[0] = '\0';
+    /* Off by default, but pre-filled with the obvious pair so switching it
+     * on does something sensible without further typing. */
+    s_settings.bsched_on = false;
+    s_settings.bsched_from[0] = 22 * 60;
+    s_settings.bsched_to[0]   = 7 * 60;
+    s_settings.bsched_pct[0]  = 5;
+    s_settings.bsched_from[1] = 7 * 60;
+    s_settings.bsched_to[1]   = 22 * 60;
+    s_settings.bsched_pct[1]  = 100;
     s_settings.metric_units = false;
     s_settings.metar_decoded = false;
     s_settings.follow_mode = false;
@@ -195,6 +204,25 @@ void settings_load(void)
     get_str(h, "oaipkey", s_settings.openaip_key, sizeof(s_settings.openaip_key));
     get_str(h, "aiskey", s_settings.ais_key, sizeof(s_settings.ais_key));
     get_str(h, "cartokey", s_settings.carto_key, sizeof(s_settings.carto_key));
+    if (nvs_get_u8(h, "bschon", &b8) == ESP_OK) {
+        s_settings.bsched_on = b8 != 0;
+    }
+    for (int s = 0; s < 2; s++) {
+        char k[12];
+        int32_t v32 = 0;
+        snprintf(k, sizeof(k), "bsf%d", s);
+        if (nvs_get_i32(h, k, &v32) == ESP_OK && v32 >= 0 && v32 < 1440) {
+            s_settings.bsched_from[s] = (int16_t)v32;
+        }
+        snprintf(k, sizeof(k), "bst%d", s);
+        if (nvs_get_i32(h, k, &v32) == ESP_OK && v32 >= 0 && v32 < 1440) {
+            s_settings.bsched_to[s] = (int16_t)v32;
+        }
+        snprintf(k, sizeof(k), "bsp%d", s);
+        if (nvs_get_u8(h, k, &b8) == ESP_OK && b8 >= 1 && b8 <= 100) {
+            s_settings.bsched_pct[s] = b8;
+        }
+    }
     if (nvs_get_u8(h, "metric", &b8) == ESP_OK) {
         s_settings.metric_units = b8 != 0;
     }
@@ -284,6 +312,16 @@ esp_err_t settings_save(void)
     nvs_set_str(h, "oaipkey", s_settings.openaip_key);
     nvs_set_str(h, "aiskey", s_settings.ais_key);
     nvs_set_str(h, "cartokey", s_settings.carto_key);
+    nvs_set_u8(h, "bschon", s_settings.bsched_on ? 1 : 0);
+    for (int s = 0; s < 2; s++) {
+        char k[12];
+        snprintf(k, sizeof(k), "bsf%d", s);
+        nvs_set_i32(h, k, s_settings.bsched_from[s]);
+        snprintf(k, sizeof(k), "bst%d", s);
+        nvs_set_i32(h, k, s_settings.bsched_to[s]);
+        snprintf(k, sizeof(k), "bsp%d", s);
+        nvs_set_u8(h, k, s_settings.bsched_pct[s]);
+    }
     nvs_set_u8(h, "metric", s_settings.metric_units ? 1 : 0);
     nvs_set_u8(h, "mdec", s_settings.metar_decoded ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);

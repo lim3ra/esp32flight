@@ -44,6 +44,7 @@ static lv_obj_t *s_sw_auto, *s_sw_ground, *s_sw_cpa, *s_sw_night;
 static lv_obj_t *s_sw_cls[FCLS_COUNT];
 static lv_obj_t *s_sw_rain;
 static lv_obj_t *s_slider_bright, *s_bright_label;
+static lv_obj_t *s_sw_bsched, *s_ta_bs_from[2], *s_ta_bs_to[2], *s_ta_bs_pct[2];
 static lv_obj_t *s_sw_airsp, *s_sw_iss, *s_sw_sonde, *s_sw_ships, *s_sw_taf;
 static lv_obj_t *s_ta_oaip, *s_ta_ais, *s_ta_carto;
 static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle, *s_sw_nauto;
@@ -332,6 +333,27 @@ static void save_cb(lv_event_t *e)
     lv_textarea_set_text(s_ta_night_to, hhmm);
     cfg->ambient_idle_min = atoi(lv_textarea_get_text(s_ta_amb_idle));
     cfg->brightness = (uint8_t)lv_slider_get_value(s_slider_bright);
+    cfg->bsched_on = lv_obj_has_state(s_sw_bsched, LV_STATE_CHECKED);
+    for (int s = 0; s < 2; s++) {
+        char b[16];
+        cfg->bsched_from[s] = (int16_t)parse_hhmm(
+            lv_textarea_get_text(s_ta_bs_from[s]), cfg->bsched_from[s]);
+        cfg->bsched_to[s] = (int16_t)parse_hhmm(
+            lv_textarea_get_text(s_ta_bs_to[s]), cfg->bsched_to[s]);
+        int pct = atoi(lv_textarea_get_text(s_ta_bs_pct[s]));
+        if (pct >= 1 && pct <= 100) {
+            cfg->bsched_pct[s] = (uint8_t)pct;
+        }
+        /* echo the parsed values back, same as the night fields do */
+        snprintf(b, sizeof(b), "%02d:%02d",
+                 cfg->bsched_from[s] / 60, cfg->bsched_from[s] % 60);
+        lv_textarea_set_text(s_ta_bs_from[s], b);
+        snprintf(b, sizeof(b), "%02d:%02d",
+                 cfg->bsched_to[s] / 60, cfg->bsched_to[s] % 60);
+        lv_textarea_set_text(s_ta_bs_to[s], b);
+        snprintf(b, sizeof(b), "%d", cfg->bsched_pct[s]);
+        lv_textarea_set_text(s_ta_bs_pct[s], b);
+    }
     cfg->rain_overlay = lv_obj_has_state(s_sw_rain, LV_STATE_CHECKED);
     cfg->airspace_enabled = lv_obj_has_state(s_sw_airsp, LV_STATE_CHECKED);
     cfg->iss_enabled = lv_obj_has_state(s_sw_iss, LV_STATE_CHECKED);
@@ -764,20 +786,38 @@ void ui_settings_open(void)
     s_sw_map_light = add_switch(p, L()->map_light_lbl, 0, 524, cfg->map_light);
     s_sw_retro_map = add_switch(p, L()->retro_map_lbl, 380, 524, cfg->retro_map);
 
+    add_section(p, L()->sec_bsched, 576);
+    s_sw_bsched = add_switch(p, L()->bsched_lbl, 0, 608, cfg->bsched_on);
+    add_label(p, L()->night_from, 380, 602);
+    add_label(p, L()->night_to, 510, 602);
+    add_label(p, L()->bsched_pct_lbl, 640, 602);
+    for (int s = 0; s < 2; s++) {
+        int y = 626 + s * 56;
+        snprintf(buf, sizeof(buf), "%02d:%02d",
+                 cfg->bsched_from[s] / 60, cfg->bsched_from[s] % 60);
+        s_ta_bs_from[s] = add_textarea(p, 380, y, 110, buf, false);
+        snprintf(buf, sizeof(buf), "%02d:%02d",
+                 cfg->bsched_to[s] / 60, cfg->bsched_to[s] % 60);
+        s_ta_bs_to[s] = add_textarea(p, 510, y, 110, buf, false);
+        snprintf(buf, sizeof(buf), "%d", cfg->bsched_pct[s]);
+        s_ta_bs_pct[s] = add_textarea(p, 640, y, 100, buf, false);
+    }
+    add_hint(p, L()->hint_bsched, 0, 654, 360);
+
 #ifdef APKFLIGHT
     /* No web panel and no OTA in the app - updates arrive as a new APK. */
-    int nety = 584;
+    int nety = 756;
 #else
-    add_section(p, L()->sec_webpanel, 584);
-    s_ta_webpass = add_textarea(p, 0, 616, 360, cfg->web_pass, false);
-    add_hint(p, L()->lbl_webpass, 0, 662, 360);
+    add_section(p, L()->sec_webpanel, 756);
+    s_ta_webpass = add_textarea(p, 0, 788, 360, cfg->web_pass, false);
+    add_hint(p, L()->lbl_webpass, 0, 834, 360);
 
-    add_section(p, L()->sec_updates, 696);
-    lv_obj_t *sw_ota = add_switch(p, L()->ota_unlock, 0, 728, cfg->ota_enabled);
+    add_section(p, L()->sec_updates, 868);
+    lv_obj_t *sw_ota = add_switch(p, L()->ota_unlock, 0, 900, cfg->ota_enabled);
     lv_obj_add_event_cb(sw_ota, ota_unlock_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_t *hint = add_label(p, L()->ota_hint, 0, 774);
+    lv_obj_t *hint = add_label(p, L()->ota_hint, 0, 946);
     lv_obj_set_style_text_font(hint, UIFONT(&font_pl_14, &font_pl_8), 0);
-    int nety = 822;
+    int nety = 994;
 #endif
 
     char netbuf[120] = "";

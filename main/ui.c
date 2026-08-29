@@ -2883,6 +2883,35 @@ bool ui_screensaver_active(void)
     return s_amb != NULL;
 }
 
+/* Which brightness slot covers local time now, or -1 for none. A range may
+ * wrap midnight (22:00-07:00), and the first match wins so overlapping slots
+ * resolve predictably instead of fighting each other. */
+static int bsched_slot_now(void)
+{
+    const settings_t *cfg = settings_get();
+    if (!cfg->bsched_on) {
+        return -1;
+    }
+    time_t now = time(NULL);
+    if (now < 1600000000) {
+        return -1;              /* clock not set yet: leave brightness alone */
+    }
+    time_t l = now + (tz_home_known() ? tz_home_offset() : 0);
+    struct tm tm;
+    gmtime_r(&l, &tm);
+    int m = tm.tm_hour * 60 + tm.tm_min;
+    for (int s = 0; s < 2; s++) {
+        int a = cfg->bsched_from[s], b = cfg->bsched_to[s];
+        if (a == b) {
+            continue;           /* empty range */
+        }
+        if (a < b ? (m >= a && m < b) : (m >= a || m < b)) {
+            return s;
+        }
+    }
+    return -1;
+}
+
 /* idle watcher: screensaver + night backlight */
 static void idle_timer_cb(lv_timer_t *t)
 {
@@ -2946,6 +2975,31 @@ static void idle_timer_cb(lv_timer_t *t)
     /* Catches every screensaver change this timer did not make itself:
        the idle trigger above, and a tap that dismissed it. */
     amb_report_state();
+
+    /* Scheduled brightness, applied when a slot is entered rather than on
+     * every tick: a change from the slider or Home Assistant then holds
+     * until the next boundary instead of being overwritten 10 s later. The
+     * level is stored either way, but the panel is only re-lit if it is
+     * already on - the schedule sets how bright, never whether. */
+    {
+        static int applied_slot = -2;
+        int slot = bsched_slot_now();
+        if (slot != applied_slot) {
+            applied_slot = slot;
+            if (slot >= 0) {
+                settings_t *w = settings_get();
+                if (w->brightness != w->bsched_pct[slot]) {
+                    w->brightness = w->bsched_pct[slot];
+                    s_bright_dirty = true;
+                    ESP_LOGI(TAG, "brightness schedule: slot %d -> %d%%",
+                             slot, w->brightness);
+                }
+                if (!s_bl_off) {
+                    bl_apply(true);
+                }
+            }
+        }
+    }
 
     /* A Home Assistant brightness slider sends a burst of values: persist
      * only once the value has been still for a tick, so one drag costs one

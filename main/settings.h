@@ -60,6 +60,10 @@ typedef struct {
     uint8_t brightness;       /* backlight, 1-100 % (boards with a dimmer) */
     char    carto_key[256];   /* CARTO basemap API key; empty = keyless
                                  requests, which now come back watermarked */
+    bool    bsched_on;        /* timed brightness schedule */
+    int16_t bsched_from[2];   /* minutes from midnight, local; may wrap */
+    int16_t bsched_to[2];
+    uint8_t bsched_pct[2];    /* 1-100 */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

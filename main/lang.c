@@ -67,6 +67,12 @@ static const lang_t k_en = {
     .hint_oaip = "Free key at openaip.net, needed for airspace zones",
     .lbl_ais = "aisstream.io API key",
     .hint_ais = "Free key at aisstream.io, needed for the ship layer",
+    .sec_bsched = "Brightness schedule",
+    .bsched_lbl = "Use the schedule",
+    .bsched_pct_lbl = "Brightness %",
+    .hint_bsched = "Two ranges, local time. A range may cross midnight "
+                   "(22:00-07:00). Setting the brightness by hand holds "
+                   "until the next range begins.",
     .sec_basemap = "Map tiles",
     .lbl_carto = "CARTO basemap API key",
     .hint_carto = "Free key at carto.com/basemaps/apikey - without it the map "
@@ -171,6 +177,12 @@ static const lang_t k_pl = {
     .hint_oaip = "Darmowy klucz na openaip.net, potrzebny do stref przestrzeni",
     .lbl_ais = "Klucz API aisstream.io",
     .hint_ais = "Darmowy klucz na aisstream.io, potrzebny do warstwy statków",
+    .sec_bsched = "Harmonogram jasno\u015bci",
+    .bsched_lbl = "U\u017cywaj harmonogramu",
+    .bsched_pct_lbl = "Jasno\u015b\u0107 %",
+    .hint_bsched = "Dwa zakresy, czas lokalny. Zakres mo\u017ce przechodzi\u0107 "
+                   "przez p\u00f3\u0142noc (22:00-07:00). R\u0119czna zmiana jasno\u015bci "
+                   "obowi\u0105zuje do pocz\u0105tku kolejnego zakresu.",
     .sec_basemap = "Kafelki mapy",
     .lbl_carto = "Klucz API CARTO basemaps",
     .hint_carto = "Darmowy klucz na carto.com/basemaps/apikey - bez niego "

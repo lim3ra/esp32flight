@@ -226,6 +226,14 @@ static const char INDEX_HTML[] =
 "<div><label>Night hours</label><select id='c_night_auto'><option value='0'>fixed hours below</option><option value='1'>auto: sunset to sunrise</option></select></div>"
 "<div><label>Night from</label><input id='c_night_start' type='time'></div>"
 "<div><label>Night until</label><input id='c_night_end' type='time'></div>"
+"<div><label>Brightness schedule</label><select id='c_bsched_on'><option value='0'>off</option><option value='1'>on</option></select>"
+"<div class='help'>Two ranges of local time, each with its own screen brightness. A range may cross midnight. Setting the brightness by hand holds until the next range begins.</div></div>"
+"<div><label>Range 1 from</label><input id='c_bs_from0' type='time'></div>"
+"<div><label>Range 1 until</label><input id='c_bs_to0' type='time'></div>"
+"<div><label>Range 1 brightness (%)</label><input id='c_bs_pct0' type='number' min='1' max='100'></div>"
+"<div><label>Range 2 from</label><input id='c_bs_from1' type='time'></div>"
+"<div><label>Range 2 until</label><input id='c_bs_to1' type='time'></div>"
+"<div><label>Range 2 brightness (%)</label><input id='c_bs_pct1' type='number' min='1' max='100'></div>"
 "<div><label>Brightness (%)</label><input id='c_brightness' type='number' min='1' max='100'>"
 "<div class='help'>Backlight level on boards with a dimmer (7B, 7C, CrowPanel Advance, Tab5). Home Assistant can also set it live over MQTT.</div></div>"
 "</div></div>"
@@ -454,6 +462,10 @@ static const char INDEX_HTML[] =
 "const mm=v=>`${String(Math.floor(v/60)).padStart(2,'0')}:${String(v%60).padStart(2,'0')}`;"
 "document.getElementById('c_night_start').value=mm(c.night_start_min||1380);"
 "document.getElementById('c_night_end').value=mm(c.night_end_min||390);"
+"for(let i=0;i<2;i++){"
+"document.getElementById('c_bs_from'+i).value=mm(c['bsched_from'+i]||0);"
+"document.getElementById('c_bs_to'+i).value=mm(c['bsched_to'+i]||0);"
+"document.getElementById('c_bs_pct'+i).value=c['bsched_pct'+i]||100;}"
 "favs=(c.favs||[]).map(f=>f&&f.name?f:{});favRender();"
 "document.getElementById('cfgsave').disabled=false;}catch(e){}}"
 "async function saveCfg(){const c={};"
@@ -468,6 +480,10 @@ static const char INDEX_HTML[] =
 "const pm=id=>{const v=document.getElementById(id).value.split(':');return (+v[0])*60+(+v[1]||0);};"
 "c.night_start_min=pm('c_night_start');c.night_end_min=pm('c_night_end');"
 "c.brightness=+document.getElementById('c_brightness').value;"
+"c.bsched_on=document.getElementById('c_bsched_on').value==='1';"
+"for(let i=0;i<2;i++){c['bsched_from'+i]=pm('c_bs_from'+i);"
+"c['bsched_to'+i]=pm('c_bs_to'+i);"
+"c['bsched_pct'+i]=+document.getElementById('c_bs_pct'+i).value;}"
 "c.fixed=document.getElementById('c_fixed').value==='1';"
 "c.hide_ground=document.getElementById('c_hide_ground').value==='1';"
 "c.show_classes=0;for(let i=0;i<5;i++)if(document.getElementById('c_cls'+i).checked)c.show_classes|=1<<i;"
@@ -652,6 +668,16 @@ static esp_err_t config_get(httpd_req_t *req)
      * missing here comes back as an empty input and wipes the stored one on
      * the next save. It also feeds the Leaflet layer on the Live tab. */
     cJSON_AddStringToObject(root, "carto_key", c->carto_key);
+    cJSON_AddBoolToObject(root, "bsched_on", c->bsched_on);
+    for (int s = 0; s < 2; s++) {
+        char k[16];
+        snprintf(k, sizeof(k), "bsched_from%d", s);
+        cJSON_AddNumberToObject(root, k, c->bsched_from[s]);
+        snprintf(k, sizeof(k), "bsched_to%d", s);
+        cJSON_AddNumberToObject(root, k, c->bsched_to[s]);
+        snprintf(k, sizeof(k), "bsched_pct%d", s);
+        cJSON_AddNumberToObject(root, k, c->bsched_pct[s]);
+    }
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
     cJSON_AddBoolToObject(root, "metar_decoded", c->metar_decoded);
@@ -899,6 +925,33 @@ static esp_err_t config_post(httpd_req_t *req)
         int r = (int)j->valuedouble;
         if (r >= 1 && r <= 250) {
             c->radius_nm = r;
+        }
+    }
+    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "bsched_on")))) {
+        c->bsched_on = cJSON_IsTrue(j);
+    }
+    for (int s = 0; s < 2; s++) {
+        char k[16];
+        snprintf(k, sizeof(k), "bsched_from%d", s);
+        if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, k)))) {
+            int v = (int)j->valuedouble;
+            if (v >= 0 && v < 1440) {
+                c->bsched_from[s] = (int16_t)v;
+            }
+        }
+        snprintf(k, sizeof(k), "bsched_to%d", s);
+        if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, k)))) {
+            int v = (int)j->valuedouble;
+            if (v >= 0 && v < 1440) {
+                c->bsched_to[s] = (int16_t)v;
+            }
+        }
+        snprintf(k, sizeof(k), "bsched_pct%d", s);
+        if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, k)))) {
+            int v = (int)j->valuedouble;
+            if (v >= 1 && v <= 100) {
+                c->bsched_pct[s] = (uint8_t)v;
+            }
         }
     }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "brightness")))) {
