@@ -260,8 +260,15 @@ static lv_obj_t *s_radar_home;
 
 /* Retro radar view: phosphor CRT with a rotating sweep and afterglow blips */
 #define RETRO_TRAIL   10          /* beam trail segments */
-#define RETRO_TICK_MS 40
-#define RETRO_STEP    2.4f        /* deg per tick: full turn every 6 s */
+/* The port runs LVGL in AVOID_TEAR mode 3, where a partial update escalates
+ * to a full refresh - so every sweep tick copies a whole 1.23 MB framebuffer,
+ * not the wedge that actually changed. At 40 ms that is ~30 MB/s of PSRAM
+ * writes against the ~33 MB/s the RGB controller is reading out of the same
+ * memory, which is why this view alone tore the image and left artefacts
+ * behind. 80 ms halves the copies. The step is left alone, so the sweep
+ * turns in 12 s instead of 6 rather than moving in visibly coarser jumps. */
+#define RETRO_TICK_MS 80
+#define RETRO_STEP    2.4f        /* deg per tick: full turn every 12 s */
 #define RET_COL_BEAM  lv_color_hex(0x53ff8a)
 #define RET_COL_DIM   lv_color_hex(0x1e7a44)
 #define RET_COL_BG    lv_color_hex(0x03140a)
