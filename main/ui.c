@@ -3815,6 +3815,12 @@ void ui_init(void)
     lv_timer_create(clock_timer_cb, 5000, NULL);
     lv_timer_create(logo_tick_cb, 500, NULL);
     lv_timer_create(idle_timer_cb, 10000, NULL);
+
+    /* Open on the local map rather than the flight detail panel: with
+     * nothing selected yet, detail has little to show at boot, while the
+     * map gives the traffic and the airspace straight away. Auto-cycle
+     * takes over from here exactly as it does after a manual switch. */
+    apply_view(VIEW_RADAR);
 }
 
 static bool s_update_avail;

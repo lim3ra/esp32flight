@@ -1,9 +1,11 @@
 #include "airspace.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -13,6 +15,17 @@
 #include "settings.h"
 
 static const char *TAG = "airspace";
+
+/* Outlines survive a reboot here. Header first, then s_count entries. */
+#define CACHE_PATH   "/assets/airspace.bin"
+#define CACHE_MAGIC  0x31505341u        /* "ASP1" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t key_fp;    /* so a new openAIP key invalidates the cache */
+    float    lat, lon;  /* where it was fetched, for the 25 km check */
+    int32_t  count;
+} asp_cache_hdr_t;
 
 #define FETCH_DIST_M   50000   /* openAIP caps dist at 50 km */
 #define RETRY_US       (30LL * 60 * 1000 * 1000)
@@ -33,6 +46,68 @@ static double s_try_lat = 999, s_try_lon = 999;
 static int64_t s_last_try = -RETRY_US;
 static char s_try_key[64];
 static bool s_ok;             /* last fetch for s_try location and key succeeded */
+static bool s_loaded;         /* cache file consulted once this boot */
+
+static uint32_t key_fp(const char *s)
+{
+    uint32_t h = 2166136261u;           /* FNV-1a */
+    for (; *s != '\0'; s++) {
+        h = (h ^ (uint8_t)*s) * 16777619u;
+    }
+    return h;
+}
+
+static void cache_save(double home_lat, double home_lon, const char *key)
+{
+    if (s_count <= 0 || s_asp == NULL) {
+        return;
+    }
+    FILE *f = fopen(CACHE_PATH, "wb");
+    if (f == NULL) {
+        return;
+    }
+    asp_cache_hdr_t h = {
+        .magic = CACHE_MAGIC,
+        .key_fp = key_fp(key),
+        .lat = (float)home_lat,
+        .lon = (float)home_lon,
+        .count = s_count,
+    };
+    if (fwrite(&h, sizeof(h), 1, f) != 1 ||
+        fwrite(s_asp, sizeof(airspace_t), (size_t)s_count, f) != (size_t)s_count) {
+        fclose(f);
+        unlink(CACHE_PATH);     /* a half-written cache is worse than none */
+        return;
+    }
+    fclose(f);
+}
+
+/* Draw something at boot instead of waiting out a fetch - and, when the
+ * fetch fails, instead of waiting out the 30 minute retry with a bare map. */
+static void cache_load(double home_lat, double home_lon, const char *key)
+{
+    FILE *f = fopen(CACHE_PATH, "rb");
+    if (f == NULL) {
+        return;
+    }
+    asp_cache_hdr_t h;
+    if (fread(&h, sizeof(h), 1, f) != 1 || h.magic != CACHE_MAGIC ||
+        h.key_fp != key_fp(key) || h.count <= 0 || h.count > MAX_AIRSPACES ||
+        geo_haversine_km(h.lat, h.lon, home_lat, home_lon) > 25.0) {
+        fclose(f);
+        return;
+    }
+    if (s_asp == NULL) {
+        s_asp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
+                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (s_asp != NULL &&
+        fread(s_asp, sizeof(airspace_t), (size_t)h.count, f) == (size_t)h.count) {
+        s_count = h.count;
+        ESP_LOGI(TAG, "%d outlines restored from cache", s_count);
+    }
+    fclose(f);
+}
 
 /* openAIP numeric airspace types, the handful worth naming on screen */
 const char *airspace_type_str(int type)
@@ -58,16 +133,17 @@ static bool type_wanted(int type)
 
 static void parse_airspaces(const char *json, double home_lat, double home_lon)
 {
-    s_count = 0;   /* renderer reads from another task; hide during rewrite */
     cJSON *root = cJSON_Parse(json);
     if (root == NULL) {
         /* Silently tolerating this is what made an out-of-memory parse look
          * like "there are no airspaces here". */
+        /* keep whatever is already on screen rather than blanking it */
         ESP_LOGW(TAG, "response did not parse (%u bytes, PSRAM free %u)",
                  (unsigned)strlen(json),
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         return;
     }
+    s_count = 0;   /* renderer reads from another task; hide during rewrite */
     const cJSON *items = cJSON_GetObjectItem(root, "items");
     int n = 0;
     for (const cJSON *it = items != NULL ? items->child : NULL;
@@ -139,6 +215,10 @@ void airspace_poll(double home_lat, double home_lon)
         s_count = 0;
         return;
     }
+    if (!s_loaded) {
+        s_loaded = true;
+        cache_load(home_lat, home_lon, cfg->openaip_key);
+    }
     bool moved = geo_haversine_km(s_try_lat, s_try_lon, home_lat, home_lon) > 25.0;
     bool rekeyed = strcmp(s_try_key, cfg->openaip_key) != 0;
     if (s_ok && !moved && !rekeyed) {
@@ -180,8 +260,9 @@ void airspace_poll(double home_lat, double home_lon)
     if (http_get_to_buffer_hdr(url, buf, BUF_SIZE, NULL,
                                "x-openaip-api-key", cfg->openaip_key) == ESP_OK) {
         parse_airspaces(buf, home_lat, home_lon);
-        s_ok = true;
+        s_ok = s_count > 0;
         ESP_LOGI(TAG, "airspace fetch ok, %d outlines kept", s_count);
+        cache_save(home_lat, home_lon, cfg->openaip_key);
     } else {
         s_ok = false;
         ESP_LOGW(TAG, "fetch failed (rate limit, bad key or offline), retry in 30 min");
