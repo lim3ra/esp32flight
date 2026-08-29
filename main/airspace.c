@@ -16,7 +16,16 @@ static const char *TAG = "airspace";
 
 #define FETCH_DIST_M   50000   /* openAIP caps dist at 50 km */
 #define RETRY_US       (30LL * 60 * 1000 * 1000)
-#define BUF_SIZE       (400 * 1024)
+
+/* Ask only for the types we draw. Unfiltered, a 50 km query answers with
+ * ~340 KB, and cJSON needs several times the text size in nodes to parse it
+ * - more than this board has free, so the parse failed and the layer stayed
+ * empty. Filtered, the same area is ~38 KB. Keep in step with
+ * airspace_type_str. */
+#define TYPE_QUERY \
+    "&type=1&type=2&type=3&type=4&type=7&type=13&type=21&type=26&type=27"
+
+#define BUF_SIZE       (128 * 1024)
 
 static airspace_t *s_asp;     /* PSRAM, MAX_AIRSPACES entries */
 static int s_count;
@@ -51,6 +60,14 @@ static void parse_airspaces(const char *json, double home_lat, double home_lon)
 {
     s_count = 0;   /* renderer reads from another task; hide during rewrite */
     cJSON *root = cJSON_Parse(json);
+    if (root == NULL) {
+        /* Silently tolerating this is what made an out-of-memory parse look
+         * like "there are no airspaces here". */
+        ESP_LOGW(TAG, "response did not parse (%u bytes, PSRAM free %u)",
+                 (unsigned)strlen(json),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        return;
+    }
     const cJSON *items = cJSON_GetObjectItem(root, "items");
     int n = 0;
     for (const cJSON *it = items != NULL ? items->child : NULL;
@@ -142,21 +159,29 @@ void airspace_poll(double home_lat, double home_lon)
         s_asp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (s_asp == NULL) {
+            ESP_LOGW(TAG, "no PSRAM for the %u byte outline table",
+                     (unsigned)(MAX_AIRSPACES * sizeof(airspace_t)));
             return;
         }
     }
     char *buf = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (buf == NULL) {
+        ESP_LOGW(TAG, "no PSRAM for the %d KB fetch buffer (free %u, largest %u)",
+                 BUF_SIZE / 1024,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         return;
     }
-    char url[200];
+    char url[320];
     snprintf(url, sizeof(url),
-             "https://api.core.openaip.net/api/airspaces?pos=%.4f,%.4f&dist=%d&limit=60",
+             "https://api.core.openaip.net/api/airspaces?pos=%.4f,%.4f&dist=%d&limit=60"
+             TYPE_QUERY,
              home_lat, home_lon, FETCH_DIST_M);
     if (http_get_to_buffer_hdr(url, buf, BUF_SIZE, NULL,
                                "x-openaip-api-key", cfg->openaip_key) == ESP_OK) {
         parse_airspaces(buf, home_lat, home_lon);
         s_ok = true;
+        ESP_LOGI(TAG, "airspace fetch ok, %d outlines kept", s_count);
     } else {
         s_ok = false;
         ESP_LOGW(TAG, "fetch failed (rate limit, bad key or offline), retry in 30 min");
