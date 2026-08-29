@@ -3019,9 +3019,18 @@ static void idle_timer_cb(lv_timer_t *t)
 
 static void retro_rain_job(void)
 {
-    int w = RADAR_W, h = RADAR_H;
+    /* Render resolution, not panel resolution: 770 KB never fit next to
+     * everything else on a 1024x600 board, and the failure was silent. The
+     * rendered bbox maps onto the buffer either way, so zooming the smaller
+     * bitmap up below lands the rain exactly where it landed before. */
+    int w = RADAR_RENDER_W, h = RADAR_RENDER_H;
     if (s_retro_rain_buf == NULL) {
         s_retro_rain_buf = heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+        if (s_retro_rain_buf == NULL) {
+            ESP_LOGW(TAG, "retro rain: no PSRAM for %d bytes (free %u)",
+                     w * h * 2,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
     }
     double rkm = settings_get()->radius_nm * 1.852;
     double dlat = rkm / 111.0;
@@ -3040,11 +3049,24 @@ static void retro_rain_job(void)
             s_retro_rain_dsc.data = (const uint8_t *)s_retro_rain_buf;
             s_retro_rain_dsc.data_size = (size_t)w * h * 2;
             lv_img_set_src(s_retro_rain_img, &s_retro_rain_dsc);
+            /* same display treatment as the map underlay and the radar tile
+               image: intrinsic size, centre pivot, object moved so the
+               zoomed bitmap lands centred on the panel */
+            if (RADAR_W > RADAR_RENDER_W) {
+                lv_img_set_zoom(s_retro_rain_img,
+                                (uint16_t)(RADAR_K * 256.0f + 0.5f));
+                lv_obj_set_pos(s_retro_rain_img,
+                               RADAR_W / 2 - RADAR_RENDER_W / 2,
+                               RADAR_H / 2 - RADAR_RENDER_H / 2);
+            }
             lv_obj_clear_flag(s_retro_rain_img, LV_OBJ_FLAG_HIDDEN);
         }
         lvgl_port_unlock();
     }
-    s_retro_rain_ms = esp_timer_get_time() / 1000;
+    /* A failed attempt must not lock the layer out for the full ten
+     * minutes, but must not spin on the network either: retry in one. */
+    s_retro_rain_ms = ok ? esp_timer_get_time() / 1000
+                         : esp_timer_get_time() / 1000 - 9 * 60 * 1000;
     s_retro_rain_gen = rainviewer_generation();
     s_retro_rain_busy = false;
 }
