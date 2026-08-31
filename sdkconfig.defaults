@@ -55,8 +55,3 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_SPIFFS_OBJ_NAME_LEN=48
 
 CONFIG_LV_MEM_CUSTOM_INCLUDE="esp_heap_caps.h"
-
-# Sockets: the panel, MQTT and several keep-alive HTTP clients (ADS-B,
-# routes, tiles) all hold descriptors at once - the stock 10 ran out and
-# socket() began failing, taking the map tiles down with it.
-CONFIG_LWIP_MAX_SOCKETS=16
