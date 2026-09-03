@@ -31,7 +31,13 @@
 #define EXAMPLE_LCD_H_RES               (LVGL_PORT_H_RES)
 #define EXAMPLE_LCD_V_RES               (LVGL_PORT_V_RES)
 #if CONFIG_CANFLIGHT_BOARD_WAVESHARE_7B
-#define EXAMPLE_LCD_PIXEL_CLOCK_HZ      (28000000)   /* 30.85M is at the edge of some panels' tolerance: units shifted the whole image on PSRAM traffic spikes (touch, refresh) until the clock came down */
+/* 30.85M is at the edge of some panels' tolerance: units shifted the whole
+ * image on PSRAM traffic spikes (touch, refresh) until the clock came down.
+ * 28M still left this unit shifting the frame and flickering horizontal
+ * lines after hours of uptime: the frame is 1386 x 661 pixel times, so this
+ * is 27.3 Hz against 30.6 Hz at 28M, for ~11 % less bandwidth demand on the
+ * PSRAM the app composes tiles in. */
+#define EXAMPLE_LCD_PIXEL_CLOCK_HZ      (25000000)
 #else
 #define EXAMPLE_LCD_PIXEL_CLOCK_HZ      (16 * 1000 * 1000)
 #endif

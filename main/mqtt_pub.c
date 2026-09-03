@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "mqtt_client.h"
@@ -19,6 +20,9 @@ static const char *TAG = "mqtt";
 #define BL_STATE_TOPIC  "esp32flight/backlight/state"
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
 #define BL_SET_TOPIC    "esp32flight/backlight/set"
+#define NEXT_VIEW_TOPIC "esp32flight/button/next_view/press"
+#define SAVER_STATE_TOPIC "esp32flight/switch/screensaver/state"
+#define SAVER_CMD_TOPIC "esp32flight/switch/screensaver/set"
 #define BL_BRI_SET      "esp32flight/backlight/brightness/set"
 
 static esp_mqtt_client_handle_t s_client;
@@ -123,6 +127,41 @@ static void publish_discovery(void)
     } else {
         esp_mqtt_client_publish(s_client, BL_CONFIG_TOPIC, "", 0, 1, 1);
     }
+
+    /* Stepping the panel is an action with no state to report, so it is a
+     * button rather than a switch - a switch would need an on/off that
+     * means nothing here and would stick in whichever position was used
+     * last. */
+    {
+        char payload[420];
+        snprintf(payload, sizeof(payload),
+                 "{\"name\":\"Next panel\","
+                 "\"command_topic\":\"" NEXT_VIEW_TOPIC "\","
+                 "\"unique_id\":\"esp32flight_next_view\","
+                 "\"icon\":\"mdi:page-next-outline\","
+                 "\"device\":{\"identifiers\":[\"esp32flight\"],"
+                 "\"name\":\"esp32flight\",\"manufacturer\":\"theqkash\","
+                 "\"model\":\"%s\"}}", model);
+        esp_mqtt_client_publish(s_client,
+                                "homeassistant/button/esp32flight_next_view/config",
+                                payload, 0, 1, 1);
+        esp_mqtt_client_subscribe(s_client, NEXT_VIEW_TOPIC, 0);
+
+        snprintf(payload, sizeof(payload),
+                 "{\"name\":\"Screensaver\","
+                 "\"command_topic\":\"" SAVER_CMD_TOPIC "\","
+                 "\"state_topic\":\"" SAVER_STATE_TOPIC "\","
+                 "\"unique_id\":\"esp32flight_screensaver\","
+                 "\"icon\":\"mdi:monitor-screenshot\","
+                 "\"device\":{\"identifiers\":[\"esp32flight\"],"
+                 "\"name\":\"esp32flight\",\"manufacturer\":\"theqkash\","
+                 "\"model\":\"%s\"}}", model);
+        esp_mqtt_client_publish(s_client,
+                                "homeassistant/switch/esp32flight_screensaver/config",
+                                payload, 0, 1, 1);
+        esp_mqtt_client_subscribe(s_client, SAVER_CMD_TOPIC, 0);
+        mqtt_pub_screensaver_state(ui_screensaver_active());
+    }
 #endif
 }
 
@@ -176,10 +215,33 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
 #ifndef APKFLIGHT
     } else if (event_id == MQTT_EVENT_DATA) {
         esp_mqtt_event_handle_t ev = data;
-        handle_bl_command(ev->topic, (size_t)ev->topic_len,
-                          ev->data, (size_t)ev->data_len);
+        if ((size_t)ev->topic_len == strlen(NEXT_VIEW_TOPIC) &&
+            strncmp(ev->topic, NEXT_VIEW_TOPIC, (size_t)ev->topic_len) == 0) {
+            /* a button carries no meaningful payload - arriving is the event */
+            ESP_LOGI(TAG, "next panel");
+            ui_next_view();
+        } else if ((size_t)ev->topic_len == strlen(SAVER_CMD_TOPIC) &&
+                   strncmp(ev->topic, SAVER_CMD_TOPIC, (size_t)ev->topic_len) == 0) {
+            bool on = ev->data_len >= 2 && strncasecmp(ev->data, "ON", 2) == 0;
+            ESP_LOGI(TAG, "screensaver %s", on ? "on" : "off");
+            ui_set_screensaver(on);
+        } else {
+            handle_bl_command(ev->topic, (size_t)ev->topic_len,
+                              ev->data, (size_t)ev->data_len);
+        }
 #endif
     }
+}
+
+void mqtt_pub_screensaver_state(bool on)
+{
+    if (s_client == NULL || !s_connected) {
+        return;
+    }
+    /* QoS 0: this can run from inside the MQTT event handler when a command
+     * echoes its own state back, and a queued QoS 1 publish deadlocks there. */
+    esp_mqtt_client_publish(s_client, SAVER_STATE_TOPIC,
+                            on ? "ON" : "OFF", 0, 0, 1);
 }
 
 void mqtt_pub_start(void)

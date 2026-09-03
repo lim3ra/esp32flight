@@ -35,6 +35,7 @@
 #include "tz.h"
 #include "ui_map.h"
 #include "ui_settings.h"
+#include "mqtt_pub.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -263,8 +264,15 @@ static lv_obj_t *s_radar_home;
 
 /* Retro radar view: phosphor CRT with a rotating sweep and afterglow blips */
 #define RETRO_TRAIL   10          /* beam trail segments */
-#define RETRO_TICK_MS 40
-#define RETRO_STEP    2.4f        /* deg per tick: full turn every 6 s */
+/* The port runs LVGL in AVOID_TEAR mode 3, where a partial update escalates
+ * to a full refresh - so every sweep tick copies a whole 1.23 MB framebuffer,
+ * not the wedge that actually changed. At 40 ms that is ~30 MB/s of PSRAM
+ * writes against the ~33 MB/s the RGB controller reads out of the same
+ * memory, and this view alone tore the image and left artefacts behind.
+ * 80 ms halves the copies; the step is left alone so the sweep turns in 12 s
+ * rather than moving in visibly coarser jumps. */
+#define RETRO_TICK_MS 80
+#define RETRO_STEP    2.4f        /* deg per tick: full turn every 12 s */
 #define RET_COL_BEAM  lv_color_hex(0x53ff8a)
 #define RET_COL_DIM   lv_color_hex(0x1e7a44)
 #define RET_COL_BG    lv_color_hex(0x03140a)
@@ -2716,11 +2724,15 @@ static void amb_show(void)
     }
     s_amb_retro = settings_get()->amb_style == 1 && s_retro_panel != NULL;
     if (s_amb_retro) {
-        /* CRT bezel: black screen, the retro scope centered on it */
+        /* Full-screen scope. The panel is narrower than the display and
+         * keeps its own dark green, so a black backdrop framed it as a
+         * visible rectangle with a wide bezel either side; painting the
+         * backdrop the same colour makes the whole screen read as one
+         * surface with the scope drawn on it. */
         s_amb = lv_obj_create(lv_layer_top());
         lv_obj_set_size(s_amb, SCR_W, SCR_H);
         lv_obj_set_pos(s_amb, 0, 0);
-        lv_obj_set_style_bg_color(s_amb, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_amb, RET_COL_BG, 0);
         lv_obj_set_style_border_width(s_amb, 0, 0);
         lv_obj_set_style_radius(s_amb, 0, 0);
         lv_obj_set_style_pad_all(s_amb, 0, 0);
@@ -2823,6 +2835,53 @@ static void amb_show(void)
     render_ambient();
 }
 
+/* Keep the Home Assistant switch in step with the screensaver, which also
+ * comes up on its own after the idle timeout and goes away on a tap. */
+static void amb_report_state(void)
+{
+    static int reported = -1;
+    int now = s_amb != NULL ? 1 : 0;
+    if (now != reported) {
+        reported = now;
+        mqtt_pub_screensaver_state(now != 0);
+    }
+}
+
+void ui_next_view(void)
+{
+    if (!lvgl_port_lock(200 / portTICK_PERIOD_MS)) {
+        return;
+    }
+    /* Drop the screensaver first. It covers the panels, so the switch would
+     * otherwise happen invisibly underneath - and in retro style it has
+     * adopted the scope panel, which apply_view must not fight over. */
+    amb_close();
+    apply_view(s_view_mode + 1);
+    amb_report_state();
+    lvgl_port_unlock();
+}
+
+void ui_set_screensaver(bool on)
+{
+    if (!lvgl_port_lock(200 / portTICK_PERIOD_MS)) {
+        return;
+    }
+    if (on) {
+        amb_show();     /* no-op when already up */
+    } else {
+        amb_close();    /* no-op when not up */
+    }
+    /* report what actually happened: amb_show can decline when PSRAM has
+       no room left for the canvas */
+    amb_report_state();
+    lvgl_port_unlock();
+}
+
+bool ui_screensaver_active(void)
+{
+    return s_amb != NULL;
+}
+
 /* idle watcher: screensaver + night backlight */
 static void idle_timer_cb(lv_timer_t *t)
 {
@@ -2876,6 +2935,10 @@ static void idle_timer_cb(lv_timer_t *t)
         ui_apply_brightness();
         s_bl_off = false;
     }
+
+    /* Catches every screensaver change this timer did not make itself: the
+       idle trigger above, and a tap that dismissed it. */
+    amb_report_state();
 }
 
 
@@ -3014,8 +3077,19 @@ static void retro_map_update(void)
         return;
     }
     if (s_retro_map_buf == NULL) {
-        s_retro_map_buf = heap_caps_malloc((size_t)RADAR_W * RADAR_H * 2,
-                                           MALLOC_CAP_SPIRAM);
+        /* Render resolution, not panel resolution: the source tiles only
+         * exist at RADAR_RENDER_*, so composing at panel size upsampled in
+         * software into a buffer twice as large as needed - 770 KB on a
+         * 1024x600 board, which never fit and left the underlay silently
+         * missing. LVGL applies the same RADAR_K zoom below that the radar
+         * map image already gets. */
+        s_retro_map_buf = heap_caps_malloc(
+            (size_t)RADAR_RENDER_W * RADAR_RENDER_H * 2, MALLOC_CAP_SPIRAM);
+        if (s_retro_map_buf == NULL) {
+            ESP_LOGW(TAG, "retro underlay: no PSRAM for %d bytes (free %u)",
+                     RADAR_RENDER_W * RADAR_RENDER_H * 2,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
     }
     if (s_retro_map_buf == NULL || s_radar_tiles == NULL) {
         return;
@@ -3075,11 +3149,20 @@ static void retro_map_update(void)
     }
     s_retro_map_dsc.header.always_zero = 0;
     s_retro_map_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    s_retro_map_dsc.header.w = RADAR_W;
-    s_retro_map_dsc.header.h = RADAR_H;
+    s_retro_map_dsc.header.w = RADAR_RENDER_W;
+    s_retro_map_dsc.header.h = RADAR_RENDER_H;
     s_retro_map_dsc.data = (const uint8_t *)s_retro_map_buf;
-    s_retro_map_dsc.data_size = (size_t)RADAR_W * RADAR_H * 2;
+    s_retro_map_dsc.data_size = (size_t)RADAR_RENDER_W * RADAR_RENDER_H * 2;
     lv_img_set_src(s_retro_map_img, &s_retro_map_dsc);
+    /* Same treatment the radar view gives its render-sized tile image:
+     * leave the object at the bitmap's own size, keep LVGL's centre pivot
+     * and move the object so the zoomed result lands centred. Setting an
+     * explicit object size here makes LVGL repeat the bitmap in stripes. */
+    if (RADAR_W > RADAR_RENDER_W) {
+        lv_img_set_zoom(s_retro_map_img, (uint16_t)(RADAR_K * 256.0f + 0.5f));
+        lv_obj_set_pos(s_retro_map_img, RADAR_W / 2 - RADAR_RENDER_W / 2,
+                       RADAR_H / 2 - RADAR_RENDER_H / 2);
+    }
     lv_obj_clear_flag(s_retro_map_img, LV_OBJ_FLAG_HIDDEN);
     strlcpy(s_retro_map_key, s_radar_key, sizeof(s_retro_map_key));
     ESP_LOGI(TAG, "retro map underlay rebuilt");
@@ -3632,6 +3715,12 @@ void ui_init(void)
     lv_timer_create(clock_timer_cb, 5000, NULL);
     lv_timer_create(logo_tick_cb, 500, NULL);
     lv_timer_create(idle_timer_cb, 10000, NULL);
+
+    /* Open on the local map rather than the flight detail panel: with
+     * nothing selected yet, detail has little to show at boot, while the
+     * map gives the traffic and the airspace straight away. Auto-cycle
+     * takes over from here exactly as it does after a manual switch. */
+    apply_view(VIEW_RADAR);
 }
 
 static bool s_update_avail;

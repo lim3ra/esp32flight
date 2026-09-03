@@ -2,6 +2,7 @@
 
 #include "extra/libs/png/lodepng.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_heap_caps.h"
@@ -217,6 +218,14 @@ static void logo_load_one(const char *icao)
             fclose(f);
             return;
         }
+        /* Only a genuine "there is no such file" is worth remembering. Any
+         * other errno means the file may well be there and we simply could
+         * not open it this time - marking it absent would push the logo
+         * onto the online path and, when that fails too, onto the permanent
+         * miss list. Retry on the next pass instead. */
+        if (errno != ENOENT) {
+            return;
+        }
         absent_remember(icao);   /* not in flash: online only from now on */
     }
 
@@ -247,8 +256,12 @@ static void logo_load_one(const char *icao)
                 fclose(f);
             }
         }
-    } else if (buf != NULL) {
-        miss_remember(icao);   /* 404 or offline: don't retry this one */
+    } else if (err == ESP_OK) {
+        /* The server answered and it was not a logo: that is a real
+         * "this airline has none" and is worth remembering. A transport
+         * error is not - offline, a busy socket pool or a TLS timeout must
+         * not cost the logo for the rest of the session. */
+        miss_remember(icao);
     }
     free(buf);
 }

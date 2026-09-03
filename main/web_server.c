@@ -1315,6 +1315,13 @@ void web_server_start(void)
 #endif
     config.max_uri_handlers = 20;
     config.lru_purge_enable = true;
+    /* The panel must never win the socket pool. At the default 7 of the 10
+     * lwIP descriptors, one open browser tab - keep-alive connections plus
+     * a /api/state poll every 5 s - left too little for the device's own
+     * outbound TLS, and socket() started failing outright: tiles, routes
+     * and weather all stopped. Four is plenty for one panel, and
+     * lru_purge_enable recycles the oldest beyond it. */
+    config.max_open_sockets = 4;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
