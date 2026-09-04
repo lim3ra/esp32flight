@@ -49,7 +49,7 @@ void settings_load(void)
     s_settings.temp_f = false;
     s_settings.theme = 0;
     s_settings.lang = 0;   /* English out of the box; 1 = Polish */
-    s_settings.ota_enabled = false;   /* never persisted, armed per session */
+    s_settings.ota_enabled = false;   /* opt-in; persisted once turned on */
     s_settings.night_start_min = 22 * 60;
     s_settings.night_end_min = 7 * 60;
     s_settings.bright_day = 100;
@@ -170,6 +170,9 @@ void settings_load(void)
     }
     get_str(h, "oaipkey", s_settings.openaip_key, sizeof(s_settings.openaip_key));
     get_str(h, "cartokey", s_settings.carto_key, sizeof(s_settings.carto_key));
+    if (nvs_get_u8(h, "otaen", &b8) == ESP_OK) {
+        s_settings.ota_enabled = b8 != 0;
+    }
     if (nvs_get_u8(h, "brday", &b8) == ESP_OK && b8 >= 5 && b8 <= 100) {
         s_settings.bright_day = b8;
     }
@@ -252,6 +255,7 @@ esp_err_t settings_save(void)
     nvs_set_u8(h, "airsp", s_settings.airspace_enabled ? 1 : 0);
     nvs_set_str(h, "oaipkey", s_settings.openaip_key);
     nvs_set_str(h, "cartokey", s_settings.carto_key);
+    nvs_set_u8(h, "otaen", s_settings.ota_enabled ? 1 : 0);
     nvs_set_u8(h, "brday", s_settings.bright_day);
     nvs_set_u8(h, "brnight", s_settings.bright_night);
     nvs_set_str(h, "tileurl", s_settings.tile_url);

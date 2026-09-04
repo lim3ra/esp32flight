@@ -25,9 +25,9 @@ static const lang_t k_en = {
     .city_search = "City search", .latitude = "Latitude", .longitude = "Longitude",
     .search_radius = "Search radius", .theme_lbl = "Theme",
     .language_lbl = "Language", .save = "Save",
-    .ota_unlock = "Allow OTA updates (until restart)",
-    .ota_hint = "Applies immediately, the web panel unlocks within seconds.\n"
-                "Do not tap Save: a restart locks OTA again. Just close this screen.",
+    .ota_unlock = "Allow OTA updates",
+    .ota_hint = "Applies immediately, and survives a restart once saved.\n"
+                "With no panel password, anyone on your network can flash this device.",
     .dd_networks = "networks", .dd_results = "results",
     .scanning = "(scanning...)", .no_networks = "(no networks)",
     .not_found = "(not found)", .searching = "(searching...)",
@@ -133,9 +133,9 @@ static const lang_t k_pl = {
     .city_search = "Szukaj miasta", .latitude = "Szerokość", .longitude = "Długość",
     .search_radius = "Promień", .theme_lbl = "Motyw",
     .language_lbl = "Język", .save = "Zapisz",
-    .ota_unlock = "Zezwól na aktualizacje OTA (do restartu)",
-    .ota_hint = "Działa od razu, panel web odblokuje się w kilka sekund.\n"
-                "Nie klikaj Zapisz: restart ponownie zablokuje OTA. Zamknij ten ekran.",
+    .ota_unlock = "Zezwól na aktualizacje OTA",
+    .ota_hint = "Działa od razu, a po zapisaniu przetrwa restart.\n"
+                "Bez hasła panelu każdy w Twojej sieci może wgrać firmware.",
     .dd_networks = "sieci", .dd_results = "wyniki",
     .scanning = "(skanowanie...)", .no_networks = "(brak sieci)",
     .not_found = "(nie znaleziono)", .searching = "(szukam...)",
