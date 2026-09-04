@@ -32,6 +32,7 @@
 #include "mqtt_pub.h"
 #include "airports.h"
 #include "airspace.h"
+#include "rainviewer.h"
 #include "regcountry.h"
 #include "trails.h"
 #include "tz.h"
@@ -730,6 +731,16 @@ static void flight_task(void *arg)
         }
         if (primed) {
             airspace_poll(lat, lon);
+            /* Advance the precipitation frame here rather than leaving it to
+             * the renderer. tilemap only asks for the frame while composing,
+             * and the map only recomposes when the view changes - so on a
+             * device that just sits there, nothing ever asked for a newer
+             * frame and the clouds froze until a reboot. The call is cheap:
+             * rainviewer_frame_path() serves a 10 minute cache and only
+             * touches the network when that expires. */
+            if (settings_get()->rain_overlay) {
+                rainviewer_frame_path();
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(CONFIG_CANFLIGHT_POLL_SECONDS * 1000));

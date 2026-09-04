@@ -637,8 +637,13 @@ static void radar_tiles_want(void)
     }
     int radius_nm = settings_get()->radius_nm;
     char key[48];
-    snprintf(key, sizeof(key), "%.3f,%.3f,%d,%.2f", s_home_lat, s_home_lon,
-             radius_nm, s_radar_zoom);
+    /* The rain generation belongs in the key: precipitation is blended into
+     * the tile bitmap, so a new frame is a different picture of the same
+     * view. Without it the early-out below matched forever and the clouds
+     * stayed as they were at the last pan or zoom. */
+    snprintf(key, sizeof(key), "%.3f,%.3f,%d,%.2f,%d", s_home_lat, s_home_lon,
+             radius_nm, s_radar_zoom,
+             settings_get()->rain_overlay ? rainviewer_generation() : -1);
     bool radar_stale = s_radar_partial_ms != 0 &&
                        esp_timer_get_time() / 1000 - s_radar_partial_ms > 20000;
     if (strcmp(key, s_radar_key) == 0 && !radar_stale) {
