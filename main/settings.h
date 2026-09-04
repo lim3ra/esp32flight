@@ -63,6 +63,10 @@ typedef struct {
     char    fav_name[3][24];  /* favorite locations, empty name = free slot */
     double  fav_lat[3], fav_lon[3];
     bool    map_light;        /* lift dark map tiles for readability (#10) */
+    bool    bsched_on;        /* timed brightness schedule */
+    int16_t bsched_from[2];   /* minutes from midnight, local; may wrap */
+    int16_t bsched_to[2];
+    uint8_t bsched_pct[2];    /* 1-100 */
     bool    retro_map;        /* green map underlay on the retro scope */
 } settings_t;
 

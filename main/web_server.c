@@ -18,8 +18,6 @@
 
 #include "cJSON.h"
 #include "lvgl_port.h"
-#include "obslog.h"
-#include "alertlog.h"
 #include "settings.h"
 #include "input_ctl.h"
 #include "airports.h"
@@ -992,55 +990,7 @@ static esp_err_t config_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t log_get(httpd_req_t *req)
-{
-    AUTH_GUARD(req);
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    const char *paths[2] = { OBSLOG_OLD_PATH, OBSLOG_PATH };
-    char buf[1024];
-    for (int i = 0; i < 2; i++) {
-        FILE *f = fopen(paths[i], "r");
-        if (f == NULL) {
-            continue;
-        }
-        size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-            if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) {
-                fclose(f);
-                httpd_resp_send_chunk(req, NULL, 0);
-                return ESP_OK;
-            }
-        }
-        fclose(f);
-    }
-    httpd_resp_send_chunk(req, NULL, 0);
-    return ESP_OK;
-}
 
-static esp_err_t alerts_get(httpd_req_t *req)
-{
-    AUTH_GUARD(req);
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    const char *paths[2] = { ALERTLOG_OLD_PATH, ALERTLOG_PATH };
-    char buf[1024];
-    for (int i = 0; i < 2; i++) {
-        FILE *f = fopen(paths[i], "r");
-        if (f == NULL) {
-            continue;
-        }
-        size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-            if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) {
-                fclose(f);
-                httpd_resp_send_chunk(req, NULL, 0);
-                return ESP_OK;
-            }
-        }
-        fclose(f);
-    }
-    httpd_resp_send_chunk(req, NULL, 0);
-    return ESP_OK;
-}
 
 #ifndef APKFLIGHT
 /* airport-code location lookup for the panel (ICAO or IATA) */
@@ -1135,8 +1085,6 @@ static esp_err_t view_get(httpd_req_t *req)
                 ui_set_update_available(true, "v9.9.9");   /* test helper */
             } else if (m >= 20 && m <= 24) {
                 ui_settings_show_tab(m - 20);   /* screenshot helper */
-            } else if (m >= 10 && m <= 12) {
-                ui_set_list_mode(m - 10);   /* 10 planes, 11 ships, 12 all */
             } else {
                 ui_set_view(m);
             }
@@ -1334,8 +1282,6 @@ void web_server_start(void)
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post },
         { .uri = "/api/backup", .method = HTTP_GET, .handler = backup_get },
-        { .uri = "/api/log", .method = HTTP_GET, .handler = log_get },
-        { .uri = "/api/alerts", .method = HTTP_GET, .handler = alerts_get },
         { .uri = "/screen.bmp", .method = HTTP_GET, .handler = screen_get },
 #ifndef APKFLIGHT
         { .uri = "/view", .method = HTTP_GET, .handler = view_get },

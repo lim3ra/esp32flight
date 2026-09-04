@@ -9,7 +9,3 @@ void mqtt_pub_state(const char *json);
 
 /* Push the current backlight state to HA after a local change. */
 void mqtt_pub_backlight_changed(void);
-
-/* The screensaver switch: it also appears on its own after the idle timeout
- * and goes away on a tap, so the device reports its own state back. */
-void mqtt_pub_screensaver_state(bool on);
