@@ -157,16 +157,7 @@ void ui_apply_brightness(void)
     }
 }
 
-static lv_obj_t *s_stats_panel;
-static lv_obj_t *s_sv_vals[4];
-static lv_obj_t *s_sv_chart;
-static lv_chart_series_t *s_sv_series;
-static lv_obj_t *s_sv_top[8];
-static lv_obj_t *s_sv_metar;
-static lv_obj_t *s_sv_days;
 static app_stats_t s_stats_snap;
-static lv_obj_t *s_mb_logo, *s_mb_callsign, *s_mb_type, *s_mb_route, *s_mb_stats, *s_mb_bar;
-static lv_obj_t *s_mode_btn_label;
 static lv_obj_t *s_clock_label;
 static lv_obj_t *s_gear_label;
 
@@ -180,6 +171,14 @@ static lv_obj_t *s_radar_range;
 static lv_obj_t *s_radar_img;
 static lv_obj_t *s_radar_rings[3];
 static lv_obj_t *s_radar_home;
+/* Summary card for the selected aircraft: everything the removed detail
+ * panel used to show, on demand instead of as a whole view. */
+static lv_obj_t *s_card;
+static lv_obj_t *s_card_logo, *s_card_cs, *s_card_sub;
+static lv_obj_t *s_card_flag, *s_card_reg, *s_card_type;
+static lv_obj_t *s_card_from, *s_card_to, *s_card_airline;
+static lv_obj_t *s_card_vals[6];
+
 /* breadcrumb trail of the selected aircraft, map mode only */
 static lv_obj_t   *s_radar_trail;
 static lv_point_t  s_radar_trail_pts[TRAIL_LEN];
@@ -218,37 +217,11 @@ void ui_set_home(double lat, double lon)
     ESP_LOGI("ui", "home set: %.4f, %.4f", lat, lon);
 }
 
-/* Detail widgets */
-static lv_obj_t *s_logo_img;
-static lv_obj_t *s_logo_fallback;
-static lv_obj_t *s_callsign_label;
-static lv_obj_t *s_airline_label;
-static lv_obj_t *s_type_label;
-/* Big-screen type tier for the detail view: on canvases much taller than
- * the 432px design (tablets) fonts and the logo scale up. The big fonts are
- * compiled only into the app build; the device always uses the small tier. */
-static bool s_big;
-static const lv_font_t *s_f_code;   /* callsign + airport codes */
-static const lv_font_t *s_f_name;   /* airline, type, times */
-static const lv_font_t *s_f_small;  /* cities, footers */
-static const lv_font_t *s_f_val;    /* stat tile values */
-static int s_city_y;                /* city row y (differs per tier) */
-static int s_dcity_w;               /* dest city label width */
-
-static lv_obj_t *s_orig_code, *s_orig_city;
-static lv_obj_t *s_orig_flag, *s_dest_flag, *s_reg_flag;
-static lv_obj_t *s_orig_time, *s_dest_time, *s_extra_label;
-static lv_obj_t *s_dest_code, *s_dest_city;
-static lv_obj_t *s_progress_bar;
-static lv_obj_t *s_progress_label;
-static lv_obj_t *s_look_label;
-static lv_obj_t *s_stat_vals[6];
-static lv_obj_t *s_detail_empty;
-static lv_obj_t *s_detail_content;
-
 static void render_list_selection(void);
 static void fb_upscale(uint16_t *fb, int W, int H, int px, int py, float k);
 static void render_radar_panel(void);
+static void card_render(void);
+static void card_open_cb(lv_event_t *e);
 static void label_set_if_changed(lv_obj_t *l, const char *txt);
 
 static void render_right(void)
@@ -348,11 +321,16 @@ static void row_click_cb(lv_event_t *e)
 {
     intptr_t idx = (intptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < s_list_plane_rows) {
+        /* tapping the row that is already selected opens its summary */
+        bool again = s_row_plane_idx[idx] == s_selected;
         s_selected = s_row_plane_idx[idx];
         strlcpy(s_selected_hex, s_shown[s_selected].ac.hex, sizeof(s_selected_hex));
         render_list_selection();
         lv_timer_reset(s_cycle_timer);
         render_right();
+        if (again) {
+            card_open_cb(NULL);
+        }
     }
 }
 
@@ -382,10 +360,6 @@ static void apply_view(int mode)
     render_right();
 }
 
-static void mode_click_cb(lv_event_t *e)
-{
-    apply_view(s_view_mode + 1);
-}
 
 
 
@@ -501,14 +475,6 @@ static void build_header(lv_obj_t *scr)
     lv_label_set_text(s_gear_label, LV_SYMBOL_SETTINGS);
     lv_obj_center(s_gear_label);
 
-    lv_obj_t *mode = lv_btn_create(hdr);
-    lv_obj_set_size(mode, UISX(46), UISY(36));
-    lv_obj_align(mode, LV_ALIGN_RIGHT_MID, -UISX(62), 0);
-    lv_obj_set_style_bg_color(mode, COL_ROW, 0);
-    lv_obj_add_event_cb(mode, mode_click_cb, LV_EVENT_CLICKED, NULL);
-    s_mode_btn_label = make_label(mode, UIFONT(&lv_font_montserrat_16, &lv_font_montserrat_10), COL_TEXT);
-    lv_label_set_text(s_mode_btn_label, LV_SYMBOL_LOOP);
-    lv_obj_center(s_mode_btn_label);
 }
 
 static void build_list(lv_obj_t *scr)
@@ -747,6 +713,180 @@ static void radar_dot_cb(lv_event_t *e)
     }
 }
 
+static void card_close_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+}
+
+static lv_obj_t *card_stat(lv_obj_t *parent, int col, int row,
+                           const char *name, lv_obj_t **val_out)
+{
+    lv_obj_t *box = lv_obj_create(parent);
+    lv_obj_set_size(box, UISX(140), UISY(52));
+    lv_obj_set_pos(box, UISX(10) + col * UISX(148), UISY(150) + row * UISY(58));
+    lv_obj_set_style_bg_color(box, COL_ROW, 0);
+    lv_obj_set_style_border_width(box, 0, 0);
+    lv_obj_set_style_radius(box, UISY(6), 0);
+    lv_obj_set_style_pad_all(box, UISY(4), 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *n = make_label(box, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
+    lv_label_set_text(n, name);
+    lv_obj_align(n, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t *v = make_label(box, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_align(v, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_label_set_text(v, "-");
+    *val_out = v;
+    return box;
+}
+
+static void build_card(lv_obj_t *parent)
+{
+    s_card = lv_obj_create(parent);
+    lv_obj_set_size(s_card, UISX(464), UISY(324));
+    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_card, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_card, COL_ACCENT, 0);
+    lv_obj_set_style_border_width(s_card, 1, 0);
+    lv_obj_set_style_radius(s_card, UISY(10), 0);
+    lv_obj_set_style_pad_all(s_card, 0, 0);
+    lv_obj_set_style_shadow_width(s_card, 24, 0);
+    lv_obj_set_style_shadow_opa(s_card, LV_OPA_50, 0);
+    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+
+    s_card_logo = lv_img_create(s_card);
+    lv_img_set_pivot(s_card_logo, 0, 0);
+    lv_img_set_zoom(s_card_logo, 256 * UISY(48) / 90);
+    lv_img_set_size_mode(s_card_logo, LV_IMG_SIZE_MODE_REAL);
+    lv_obj_set_pos(s_card_logo, UISX(12), UISY(12));
+    lv_obj_add_flag(s_card_logo, LV_OBJ_FLAG_HIDDEN);
+
+    s_card_cs = make_label(s_card, UIFONT(&lv_font_montserrat_20, &lv_font_montserrat_14), COL_TEXT);
+    lv_obj_set_pos(s_card_cs, UISX(74), UISY(12));
+    s_card_sub = make_label(s_card, UIFONT(&font_pl_14, &font_pl_8), COL_ACCENT);
+    lv_obj_set_pos(s_card_sub, UISX(74), UISY(40));
+
+    s_card_flag = lv_img_create(s_card);
+    lv_obj_set_pos(s_card_flag, UISX(12), UISY(70));
+    lv_obj_add_flag(s_card_flag, LV_OBJ_FLAG_HIDDEN);
+    s_card_reg = make_label(s_card, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_card_reg, UISX(56), UISY(68));
+    s_card_type = make_label(s_card, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
+    lv_obj_set_pos(s_card_type, UISX(56), UISY(90));
+
+    s_card_from = make_label(s_card, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_card_from, UISX(12), UISY(116));
+    s_card_to = make_label(s_card, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_card_to, UISX(238), UISY(116));
+    s_card_airline = make_label(s_card, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
+    lv_obj_set_pos(s_card_airline, UISX(238), UISY(40));
+
+    card_stat(s_card, 0, 0, L()->st_alt,   &s_card_vals[0]);
+    card_stat(s_card, 1, 0, L()->st_speed, &s_card_vals[1]);
+    card_stat(s_card, 2, 0, L()->st_vrate, &s_card_vals[2]);
+    card_stat(s_card, 0, 1, L()->st_dist,  &s_card_vals[3]);
+    card_stat(s_card, 1, 1, L()->st_track, &s_card_vals[4]);
+    card_stat(s_card, 2, 1, "Squawk",      &s_card_vals[5]);
+
+    lv_obj_t *x = lv_btn_create(s_card);
+    lv_obj_set_size(x, UISX(38), UISY(38));
+    lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -UISX(8), UISY(8));
+    lv_obj_set_style_bg_color(x, COL_ROW, 0);
+    lv_obj_set_style_radius(x, LV_RADIUS_CIRCLE, 0);
+    lv_obj_add_event_cb(x, card_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *xl = lv_label_create(x);
+    lv_label_set_text(xl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(xl, COL_TEXT, 0);
+    lv_obj_center(xl);
+}
+
+/* Fill the card from the current selection. Called on open and on every
+ * refresh, so the numbers keep moving while it is up. */
+static void card_render(void)
+{
+    if (s_card == NULL || lv_obj_has_flag(s_card, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+    if (s_selected < 0 || s_selected >= s_shown_count) {
+        lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const shown_flight_t *sf = &s_shown[s_selected];
+    const aircraft_t *ac = &sf->ac;
+    const route_info_t *rt = sf->route.callsign[0] && sf->route.valid ? &sf->route : NULL;
+
+    label_set_if_changed(s_card_cs, ac->callsign[0] ? ac->callsign : ac->hex);
+    label_set_if_changed(s_card_sub, sf->iata[0] ? sf->iata : ac->hex);
+
+    const char *lcode = airline_code(ac, &sf->route);
+    const lv_img_dsc_t *ldsc = lcode ? logos_get(lcode) : NULL;
+    if (ldsc != NULL) {
+        img_src_if_changed(s_card_logo, ldsc);
+        lv_obj_clear_flag(s_card_logo, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_card_logo, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    label_set_if_changed(s_card_reg, ac->reg[0] ? ac->reg : "-");
+    const char *cc = ac->reg[0] ? reg_country(ac->reg) : NULL;
+    const lv_img_dsc_t *fdsc = cc != NULL ? flags_get(cc) : NULL;
+    if (fdsc != NULL) {
+        img_src_if_changed(s_card_flag, fdsc);
+        lv_obj_clear_flag(s_card_flag, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_card_flag, LV_OBJ_FLAG_HIDDEN);
+    }
+    char ty[72];
+    snprintf(ty, sizeof(ty), "%s%s%s",
+             ac->type_desc[0] ? ac->type_desc : ac->type_icao,
+             ac->military ? "  " : "", ac->military ? "MIL" : "");
+    label_set_if_changed(s_card_type, ty[0] ? ty : "-");
+
+    char from[72], to[72];
+    if (rt != NULL) {
+        snprintf(from, sizeof(from), "%s  %s",
+                 rt->origin.iata[0] ? rt->origin.iata : rt->origin.icao,
+                 rt->origin.city);
+        snprintf(to, sizeof(to), LV_SYMBOL_RIGHT "  %s  %s",
+                 rt->destination.iata[0] ? rt->destination.iata : rt->destination.icao,
+                 rt->destination.city);
+        label_set_if_changed(s_card_airline, rt->airline_name);
+    } else {
+        snprintf(from, sizeof(from), "%s", L()->route_lbl);
+        snprintf(to, sizeof(to), "-");
+        label_set_if_changed(s_card_airline, sf->airline);
+    }
+    label_set_if_changed(s_card_from, from);
+    label_set_if_changed(s_card_to, to);
+
+    char v[28], u[20];
+    label_set_if_changed(s_card_vals[0], ac->on_ground
+                             ? L()->ground
+                             : units_alt(ac->alt_baro_ft, u, sizeof(u)));
+    label_set_if_changed(s_card_vals[1], units_speed(ac->gs_kts, u, sizeof(u)));
+    snprintf(v, sizeof(v), "%+d fpm", ac->baro_rate_fpm);
+    label_set_if_changed(s_card_vals[2], v);
+    snprintf(v, sizeof(v), "%.1f km", ac->dist_nm * 1.852);
+    label_set_if_changed(s_card_vals[3], v);
+    snprintf(v, sizeof(v), "%d\xC2\xB0 %s", (int)ac->track_deg,
+             lang_compass((int)ac->track_deg));
+    label_set_if_changed(s_card_vals[4], v);
+    label_set_if_changed(s_card_vals[5], ac->squawk[0] ? ac->squawk : "-");
+}
+
+static void card_open_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_card == NULL || s_selected < 0) {
+        return;
+    }
+    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_card);
+    card_render();
+}
+
 static void build_radar_panel(lv_obj_t *scr)
 {
     s_radar_panel = make_panel(scr);
@@ -810,7 +950,10 @@ static void build_radar_panel(lv_obj_t *scr)
     lv_obj_set_flex_flow(s_radar_bub, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_radar_bub, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(s_radar_bub, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_radar_bub, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_radar_bub, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_radar_bub, UISY(6));
+    lv_obj_add_event_cb(s_radar_bub, card_open_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_radar_bub, LV_OBJ_FLAG_HIDDEN);
     s_radar_blogo = lv_img_create(s_radar_bub);
     lv_img_set_pivot(s_radar_blogo, 0, 0);
@@ -844,6 +987,8 @@ static void build_radar_panel(lv_obj_t *scr)
     s_radar_range = make_label(s_radar_panel, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
     lv_obj_align(s_radar_range, LV_ALIGN_BOTTOM_RIGHT, -UISX(10), -UISY(6));
     lv_label_set_text(s_radar_range, "");
+
+    build_card(s_radar_panel);
 }
 
 /* ---------- optional extra objects: ISS, radiosondes, AIS ships ---------- */
@@ -1123,6 +1268,7 @@ static void render_radar_panel(void)
         lv_obj_add_flag(s_radar_bub, LV_OBJ_FLAG_HIDDEN);
     }
     render_airspaces(map_mode);
+    card_render();
 }
 
 /* ---------- full-screen ambient screensaver ---------- */
@@ -1376,7 +1522,6 @@ const char *ui_update_tag(void)
     return s_update_tag;
 }
 
-static lv_obj_t *s_flyover_banner;
 
 
 
@@ -1645,11 +1790,6 @@ void ui_toast(const char *text)
  * lock. Returns false for names it does not own. */
 bool ui_input_action(const char *a)
 {
-    if (strcmp(a, "next_view") == 0 || strcmp(a, "prev_view") == 0) {
-        int v = (s_view_mode + (a[0] == 'n' ? 1 : 4)) % 5;
-        apply_view(v);
-        return true;
-    }
     if (strcmp(a, "next_ac") == 0 || strcmp(a, "prev_ac") == 0) {
         if (s_shown_count == 0) {
             return true;

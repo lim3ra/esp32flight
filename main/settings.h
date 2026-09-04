@@ -18,21 +18,16 @@ typedef struct {
     bool   ota_enabled;     /* volatile: always false after boot, armed from
                                the on-device settings screen only */
     /* integrations, edited via the web panel (/api/config) */
-    char   ntfy_topic[48];  /* ntfy.sh topic for push notifications */
     char   mqtt_uri[96];    /* e.g. mqtt://user:pass@192.168.1.5:1883 */
     char   fa_key[48];      /* FlightAware AeroAPI key (IATA flight numbers) */
     char   watch_regs[96];  /* comma-separated watchlist (regs/callsign prefixes) */
-    char   webhook_url[96]; /* generic JSON webhook for events */
     char   local_adsb[96];  /* dump1090/readsb aircraft.json URL (LAN receiver) */
     bool   local_adsb_use;  /* off = internet sources despite a saved URL (#17) */
     bool   temp_f;          /* header weather in Fahrenheit (#25) */
     char   web_pass[33];    /* HTTP Basic Auth for the web panel, empty = open */
-    bool   cpa_alerts;      /* push when an interesting aircraft will pass close */
-    bool   cpa_all;         /* flyover alerts for every aircraft, not only interesting */
     bool   night_enabled;
     int    night_start_min; /* minutes from midnight, local */
     int    night_end_min;
-    int    ambient_idle_min;  /* full-screen map screensaver after N idle min, 0=off */
     char   filter_airport[8]; /* airport filter (ICAO/IATA), empty=off */
     bool   filter_apt_exclude; /* false: show only that airport, true: hide it */
     int    alt_min_ft;        /* altitude band filter, 0 = no bound */
@@ -46,14 +41,8 @@ typedef struct {
     uint8_t brightness;       /* 5..100, applied where the backlight can dim (#13/HA) */
     bool    clock_12h;        /* AM/PM clock everywhere a time is shown */
     char    input_map[176];   /* physical input mapping, see input_ctl.c (#13) */
-    uint8_t amb_style;        /* screensaver: 0 = map, 1 = retro radar */
-    bool    taf_enabled;      /* fetch TAF along with METAR */
-    bool    iss_enabled;      /* ISS as an extra radar object */
-    bool    sonde_enabled;    /* SondeHub radiosondes as radar objects */
-    bool    ships_enabled;    /* AIS ships via aisstream.io (needs ais_key) */
     bool    airspace_enabled; /* openAIP airspace outlines (needs openaip_key) */
     char    openaip_key[64];  /* openAIP client id */
-    char    ais_key[48];      /* aisstream.io API key */
     char    carto_key[48];    /* CARTO basemaps key; empty = OSM tiles + on-device dark style */
     char    tile_url[112];    /* custom tile URL template with {z}/{x}/{y}; overrides both */
     bool    metric_units;     /* m + km/h instead of ft + kt */
@@ -67,7 +56,6 @@ typedef struct {
     int16_t bsched_from[2];   /* minutes from midnight, local; may wrap */
     int16_t bsched_to[2];
     uint8_t bsched_pct[2];    /* 1-100 */
-    bool    retro_map;        /* green map underlay on the retro scope */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

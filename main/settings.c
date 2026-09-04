@@ -47,28 +47,18 @@ void settings_load(void)
     s_settings.map_light = false;
     s_settings.local_adsb_use = true;
     s_settings.temp_f = false;
-    s_settings.retro_map = false;
-    s_settings.amb_style = 0;
     s_settings.theme = 0;
     s_settings.lang = 0;   /* English out of the box; 1 = Polish */
     s_settings.ota_enabled = false;   /* never persisted, armed per session */
-    s_settings.cpa_alerts = true;
-    s_settings.cpa_all = false;
     s_settings.night_enabled = false;
     s_settings.night_start_min = 23 * 60;
     s_settings.night_end_min = 6 * 60 + 30;
-    s_settings.ambient_idle_min = 10;
     s_settings.filter_airport[0] = '\0';
     s_settings.filter_apt_exclude = false;
     s_settings.alt_min_ft = 0;
     s_settings.alt_max_ft = 0;
-    s_settings.taf_enabled = false;
-    s_settings.iss_enabled = false;
-    s_settings.sonde_enabled = false;
-    s_settings.ships_enabled = false;
     s_settings.airspace_enabled = false;
     s_settings.openaip_key[0] = '\0';
-    s_settings.ais_key[0] = '\0';
     s_settings.carto_key[0] = '\0';
     s_settings.tile_url[0] = '\0';
     s_settings.bsched_on = false;
@@ -126,9 +116,6 @@ void settings_load(void)
     if (nvs_get_u8(h, "map_light", &hide) == ESP_OK) {
         s_settings.map_light = hide != 0;
     }
-    if (nvs_get_u8(h, "retro_map", &hide) == ESP_OK) {
-        s_settings.retro_map = hide != 0;
-    }
     if (nvs_get_u8(h, "rain", &hide) == ESP_OK) {
         s_settings.rain_overlay = hide != 0;
     }
@@ -145,9 +132,6 @@ void settings_load(void)
         s_settings.clock_12h = hide != 0;
     }
     get_str(h, "inputmap", s_settings.input_map, sizeof(s_settings.input_map));
-    if (nvs_get_u8(h, "amb_style", &hide) == ESP_OK) {
-        s_settings.amb_style = hide == 1 ? 1 : 0;
-    }
     uint8_t theme = 0;
     if (nvs_get_u8(h, "theme", &theme) == ESP_OK) {
         s_settings.theme = theme;
@@ -156,11 +140,9 @@ void settings_load(void)
     if (nvs_get_u8(h, "lang", &lang) == ESP_OK) {
         s_settings.lang = lang;
     }
-    get_str(h, "ntfy", s_settings.ntfy_topic, sizeof(s_settings.ntfy_topic));
     get_str(h, "mqtt", s_settings.mqtt_uri, sizeof(s_settings.mqtt_uri));
     get_str(h, "fakey", s_settings.fa_key, sizeof(s_settings.fa_key));
     get_str(h, "watch", s_settings.watch_regs, sizeof(s_settings.watch_regs));
-    get_str(h, "webhook", s_settings.webhook_url, sizeof(s_settings.webhook_url));
     get_str(h, "ladsb", s_settings.local_adsb, sizeof(s_settings.local_adsb));
     if (nvs_get_u8(h, "ladsb_use", &hide) == ESP_OK) {
         s_settings.local_adsb_use = hide != 0;
@@ -178,12 +160,6 @@ void settings_load(void)
         s_settings.alt_max_ft = alt;
     }
     uint8_t b8 = 0;
-    if (nvs_get_u8(h, "cpa", &b8) == ESP_OK) {
-        s_settings.cpa_alerts = b8 != 0;
-    }
-    if (nvs_get_u8(h, "cpa_all", &b8) == ESP_OK) {
-        s_settings.cpa_all = b8 != 0;
-    }
     if (nvs_get_u8(h, "fltexcl", &b8) == ESP_OK) {
         s_settings.filter_apt_exclude = b8 != 0;
     }
@@ -198,25 +174,11 @@ void settings_load(void)
         s_settings.night_end_min = m;
     }
     if (nvs_get_i32(h, "amb_idle", &m) == ESP_OK && m >= 0 && m <= 240) {
-        s_settings.ambient_idle_min = m;
-    }
-    if (nvs_get_u8(h, "taf", &b8) == ESP_OK) {
-        s_settings.taf_enabled = b8 != 0;
-    }
-    if (nvs_get_u8(h, "iss", &b8) == ESP_OK) {
-        s_settings.iss_enabled = b8 != 0;
-    }
-    if (nvs_get_u8(h, "sonde", &b8) == ESP_OK) {
-        s_settings.sonde_enabled = b8 != 0;
-    }
-    if (nvs_get_u8(h, "ships", &b8) == ESP_OK) {
-        s_settings.ships_enabled = b8 != 0;
     }
     if (nvs_get_u8(h, "airsp", &b8) == ESP_OK) {
         s_settings.airspace_enabled = b8 != 0;
     }
     get_str(h, "oaipkey", s_settings.openaip_key, sizeof(s_settings.openaip_key));
-    get_str(h, "aiskey", s_settings.ais_key, sizeof(s_settings.ais_key));
     get_str(h, "cartokey", s_settings.carto_key, sizeof(s_settings.carto_key));
     if (nvs_get_u8(h, "bschon", &b8) == ESP_OK) {
         s_settings.bsched_on = b8 != 0;
@@ -284,7 +246,6 @@ esp_err_t settings_save(void)
     nvs_set_str(h, "pass", s_settings.wifi_pass);
     nvs_set_u8(h, "fixed_loc", s_settings.use_fixed_loc ? 1 : 0);
     nvs_set_u8(h, "map_light", s_settings.map_light ? 1 : 0);
-    nvs_set_u8(h, "retro_map", s_settings.retro_map ? 1 : 0);
     snprintf(coord, sizeof(coord), "%.6f", s_settings.lat);
     nvs_set_str(h, "lat", coord);
     snprintf(coord, sizeof(coord), "%.6f", s_settings.lon);
@@ -299,14 +260,11 @@ esp_err_t settings_save(void)
     nvs_set_u8(h, "bright", s_settings.brightness);
     nvs_set_u8(h, "clk12", s_settings.clock_12h ? 1 : 0);
     nvs_set_str(h, "inputmap", s_settings.input_map);
-    nvs_set_u8(h, "amb_style", s_settings.amb_style);
     nvs_set_u8(h, "theme", (uint8_t)s_settings.theme);
     nvs_set_u8(h, "lang", (uint8_t)s_settings.lang);
-    nvs_set_str(h, "ntfy", s_settings.ntfy_topic);
     nvs_set_str(h, "mqtt", s_settings.mqtt_uri);
     nvs_set_str(h, "fakey", s_settings.fa_key);
     nvs_set_str(h, "watch", s_settings.watch_regs);
-    nvs_set_str(h, "webhook", s_settings.webhook_url);
     nvs_set_str(h, "ladsb", s_settings.local_adsb);
     nvs_set_u8(h, "ladsb_use", s_settings.local_adsb_use ? 1 : 0);
     nvs_set_u8(h, "temp_f", s_settings.temp_f ? 1 : 0);
@@ -314,20 +272,12 @@ esp_err_t settings_save(void)
     nvs_set_str(h, "fltapt", s_settings.filter_airport);
     nvs_set_i32(h, "altmin", s_settings.alt_min_ft);
     nvs_set_i32(h, "altmax", s_settings.alt_max_ft);
-    nvs_set_u8(h, "cpa", s_settings.cpa_alerts ? 1 : 0);
-    nvs_set_u8(h, "cpa_all", s_settings.cpa_all ? 1 : 0);
     nvs_set_u8(h, "fltexcl", s_settings.filter_apt_exclude ? 1 : 0);
     nvs_set_u8(h, "night", s_settings.night_enabled ? 1 : 0);
     nvs_set_i32(h, "night_s", s_settings.night_start_min);
     nvs_set_i32(h, "night_e", s_settings.night_end_min);
-    nvs_set_i32(h, "amb_idle", s_settings.ambient_idle_min);
-    nvs_set_u8(h, "taf", s_settings.taf_enabled ? 1 : 0);
-    nvs_set_u8(h, "iss", s_settings.iss_enabled ? 1 : 0);
-    nvs_set_u8(h, "sonde", s_settings.sonde_enabled ? 1 : 0);
-    nvs_set_u8(h, "ships", s_settings.ships_enabled ? 1 : 0);
     nvs_set_u8(h, "airsp", s_settings.airspace_enabled ? 1 : 0);
     nvs_set_str(h, "oaipkey", s_settings.openaip_key);
-    nvs_set_str(h, "aiskey", s_settings.ais_key);
     nvs_set_str(h, "cartokey", s_settings.carto_key);
     nvs_set_u8(h, "bschon", s_settings.bsched_on ? 1 : 0);
     for (int s = 0; s < 2; s++) {

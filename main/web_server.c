@@ -123,7 +123,6 @@ static const char INDEX_HTML[] =
 "<h1><span class=\'mark\'>\xe2\x9c\x88</span>esp32flight</h1><div class='dim' id='hdr'>loading...</div>"
 "<div class='tabs'>"
 "<button class='tab on' id='tb_live' onclick=\"showTab('live')\">Live</button>"
-"<button class='tab' id='tb_hist' onclick=\"showTab('hist')\">History</button>"
 "<button class='tab' id='tb_set' onclick=\"showTab('set')\">Settings</button>"
 "<button class='tab' id='tb_api' onclick=\"showTab('api')\">API</button>"
 "</div>"
@@ -140,7 +139,7 @@ static const char INDEX_HTML[] =
 "<span class='dim'>Firmware update (.bin): </span>"
 "<input type='file' id='fw'> <button id='otabtn' onclick='ota()' disabled>Flash</button> <span id='otastat' class='dim'></span>"
 "<div class='dim' style='margin-top:8px'>"
-"<a href='/screen.bmp'>screenshot</a> &middot; <a href='/api/state'>api</a> &middot; <a href='/api/log' download='esp32flight-log.tsv'>log CSV</a> &middot; <a href='/metrics'>metrics</a> &middot; "
+"<a href='/screen.bmp'>screenshot</a> &middot; <a href='/api/state'>api</a> &middot; <a href='/metrics'>metrics</a> &middot; "
 "<a href='https://github.com/theqkash/esp32flight'>github.com/theqkash/esp32flight</a></div></div>"
 "<div class='sect'><h3>Device settings</h3>"
 "<div class='cfgcard'><h4>Network</h4><div class='grid2'>"
@@ -178,7 +177,6 @@ static const char INDEX_HTML[] =
 "<div class='help'>Precipitation from RainViewer blended over the radar and maps.</div></div>"
 "<div><label>Route on list and radar</label><select id='c_show_route'><option value='0'>off</option><option value='1'>on</option></select>"
 "<div class='help'>Origin and destination codes on list rows, cities in the tapped-aircraft bubble.</div></div>"
-"<div><label>Screensaver style</label><select id='c_amb_style'><option value='0'>sky map</option><option value='1'>retro radar</option></select></div>"
 "<div><label>Altitude from (ft, 0 = off)</label><input id='c_alt_min_ft' type='number'></div>"
 "<div><label>Altitude to (ft, 0 = off)</label><input id='c_alt_max_ft' type='number'></div>"
 "<div><label>Airport (ICAO or IATA)</label><input id='c_filter_airport' placeholder='KRK'>"
@@ -188,30 +186,13 @@ static const char INDEX_HTML[] =
 "<div class='cfgcard'><h4>Layers and extra objects</h4><div class='grid2'>"
 "<div><label>Airspace zones (openAIP)</label><select id='c_airspace_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
 "<div class='help'>CTR, TMA and danger zone outlines on the radar map. Needs an openAIP key (Integrations).</div></div>"
-"<div><label>ISS on the radar</label><select id='c_iss_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>The Space Station as a radar object when its track crosses your area, with an above-horizon indicator.</div></div>"
-"<div><label>Weather balloons (SondeHub)</label><select id='c_sonde_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>Radiosondes tracked by the SondeHub community within 250 km.</div></div>"
-"<div><label>Ships (AIS)</label><select id='c_ships_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>Vessels near you via aisstream.io. Needs a free key (Integrations).</div></div>"
-"<div><label>TAF airport forecast</label><select id='c_taf_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>Terminal forecast for the nearest airport, shown next to the METAR.</div></div>"
 "</div></div>"
-"<div class='cfgcard'><h4>Alerts</h4><div class='grid2'>"
-"<div><label>ntfy.sh topic (push to your phone)</label><input id='c_ntfy_topic' placeholder='my-secret-esp32flight-8341'>"
-"<div class='help'>Free push notifications, no account needed. 1) Install the ntfy app (ntfy.sh). 2) Subscribe to a topic name you invent. 3) Enter the same name here. Alerts: emergency squawks, watchlist, flyovers.</div></div>"
-"<div><label>Flyover (CPA) alerts</label><select id='c_cpa_alerts'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>Screen banner plus push a few minutes before an aircraft passes within 5 km of you.</div></div>"
-"<div><label>Flyover alert scope</label><select id='c_cpa_all'><option value='0'>interesting aircraft only</option><option value='1'>all aircraft</option></select>"
-"<div class='help'>Interesting = military, notable heavies and your watchlist (default). All = every aircraft; can be noisy under a busy approach path.</div></div>"
+"<div class='cfgcard'><h4>Watchlist</h4><div class='grid2'>"
 "<div><label>Watchlist</label><input id='c_watch_regs' placeholder='SP-LR,RCH,A388'>"
-"<div class='help'>Comma-separated registration or callsign prefixes: highlighted in gold and push-notified.</div></div>"
-"<div><label>Webhook URL</label><input id='c_webhook_url' placeholder='https://n8n.example.com/hook/abc'>"
-"<div class='help'>Every alert POSTs JSON {source, title, message} to this address (Node-RED, n8n, Discord/Slack bridges).</div></div>"
+"<div class='help'>Comma-separated registration or callsign prefixes: highlighted in gold on the list.</div></div>"
 "</div></div>"
 "<div class='cfgcard'><h4>Display</h4><div class='grid2'>"
 "<div><label>Brighter map tiles</label><select id='c_map_light'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div><label>Map on retro radar</label><select id='c_retro_map'><option value='0'>off</option><option value='1'>on</option></select>"
 "<div><label>12-hour clock (AM/PM)</label><select id='c_clock_12h'><option value='0'>24 h</option><option value='1'>12 h AM/PM</option></select></div>"
 "<div><label>Brightness control</label><select id='c_brightness_ctl'><option value='0'>off (default)</option><option value='1'>on</option></select>"
 "<div class='help'>Master switch for backlight dimming. Off keeps stock full-brightness behavior on every board.</div></div>"
@@ -225,10 +206,8 @@ static const char INDEX_HTML[] =
 "<div><label>METAR style</label><select id='c_metar_decoded'><option value='0'>raw</option><option value='1'>decoded</option></select></div>"
 "<div><label>Auto-cycle flights</label><select id='c_follow_mode'><option value='0'>on (default)</option><option value='1'>off, follow selection</option></select>"
 "<div class='help'>Off keeps the selected flight on screen until you pick another one.</div></div>"
-"<div><label>Map screensaver after (minutes, 0 = off)</label><input id='c_ambient_idle_min' type='number'>"
-"<div class='help'>Full-screen map of your area after this many idle minutes. Tap to return.</div></div>"
 "<div><label>Night mode</label><select id='c_night_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
-"<div class='help'>Backlight turns off during the quiet hours below; first tap wakes the screen.</div></div>"
+"<div class='help'>Backlight turns off during the quiet hours below once the screen has been idle a minute; a tap wakes it.</div></div>"
 "<div><label>Night hours</label><select id='c_night_auto'><option value='0'>fixed hours below</option><option value='1'>auto: sunset to sunrise</option></select></div>"
 "<div><label>Night from</label><input id='c_night_start' type='time'></div>"
 "<div><label>Night until</label><input id='c_night_end' type='time'></div>"
@@ -240,8 +219,6 @@ static const char INDEX_HTML[] =
 "<div class='help'>Optional. Adds flight numbers (FR4238) and live routes. Free Personal key: flightaware.com/aeroapi.</div></div>"
 "<div><label>openAIP API key</label><input id='c_openaip_key'>"
 "<div class='help'>Free account at openaip.net; powers the airspace zone layer.</div></div>"
-"<div><label>aisstream.io API key</label><input id='c_ais_key'>"
-"<div class='help'>Free key at aisstream.io; powers the ship layer.</div></div>"
 "<div><label>CARTO basemaps key</label><input id='c_carto_key' placeholder='blank = OSM with built-in dark style'>"
 "<div class='help'>Blank: OpenStreetMap tiles restyled dark on the device. With a free key from carto.com/basemaps/apikey: CARTO&#39;s native dark_all / light_all.</div></div>"
 "<div><label>Custom tile URL template</label><input id='c_tile_url' placeholder='https://tiles.example.com/{z}/{x}/{y}.png'>"
@@ -266,14 +243,6 @@ static const char INDEX_HTML[] =
 "</div></div>"
 "<div style='margin-top:14px'><button id='cfgsave' onclick='saveCfg()' disabled>Save and restart</button> <span id='cfgstat' class='dim'></span></div></div>"
 "</div>"
-"<div id='t_hist' class='tabpane'>"
-"<div class='sect'><h3>Spotting history</h3>"
-"<input id='hq' placeholder='filter (callsign, type...)'> <button onclick='loadHist()'>Load</button>"
-"<div class='tw'><table><tbody id='hrows'></tbody></table></div></div>"
-"<div class='sect'><h3>Alert history</h3>"
-"<div class='help'>Emergency squawks, watchlist hits and flyover predictions that triggered a notification.</div>"
-"<div class='tw'><table><tbody id='arows'></tbody></table></div></div>"
-"</div>"
 "<div id='t_api' class='tabpane'>"
 "<div class='sect api'><h3>HTTP API</h3>"
 "<p class='dim'>Base URL: <code>http://esp32flight.local</code> (or the device IP). When a panel password is set, every endpoint requires HTTP Basic Auth with user <code>admin</code>: <code>curl -u admin:PASSWORD ...</code></p>"
@@ -286,8 +255,6 @@ static const char INDEX_HTML[] =
 "<dt>POST /api/config</dt>"
 "<dd>JSON body with any subset of the config fields; omitted fields keep their value. The device saves to flash and restarts. Field names match the GET response, plus write-only <code>pass</code> (Wi-Fi) and <code>web_pass</code> (panel)."
 "<pre>curl -X POST http://esp32flight.local/api/config -d '{\"radius_nm\":80,\"theme\":3}'</pre></dd>"
-"<dt>GET /api/log</dt>"
-"<dd>Spotting history, one aircraft per line, tab-separated: unix epoch, ICAO hex, callsign, type, airline. Rotates at about 256 KB (current + previous file are concatenated).</dd>"
 "<dt>GET /api/airport?code=EPGD</dt>"
 "<dd>Airport lookup in the onboard OurAirports database, ICAO or IATA: <code>{icao, iata, city, lat, lon}</code>. Device build only.</dd>"
 "<dt>GET /screen.bmp</dt>"
@@ -298,7 +265,6 @@ static const char INDEX_HTML[] =
 "<dd>Firmware update: send the raw OTA .bin as the request body. Returns 403 unless updates are unlocked in the on-device settings (System tab; the switch re-locks on every restart)."
 "<pre>curl --data-binary @esp32flight-ota.bin http://esp32flight.local/ota</pre></dd>"
 "<dt>Webhook payload</dt>"
-"<dd>On every alert (emergency squawk, watchlist, flyover) the device POSTs to your webhook URL: <code>{\"source\":\"esp32flight\",\"title\":\"...\",\"message\":\"...\"}</code></dd>"
 "</dl></div>"
 "</div>"
 "<script>"
@@ -307,16 +273,11 @@ static const char INDEX_HTML[] =
 "const gst={},alts={};"
 "const ualt=v=>metric?grp(v*0.3048)+' m':grp(v)+' ft';"
 "const uspd=v=>metric?Math.round(v*1.852)+' km/h':v+' kt';"
-"function showTab(n){['live','hist','set','api'].forEach(k=>{"
+"function showTab(n){['live','set','api'].forEach(k=>{"
 "document.getElementById('t_'+k).classList.toggle('on',k===n);"
 "document.getElementById('tb_'+k).classList.toggle('on',k===n);});"
 "if(n==='live'&&map)setTimeout(()=>map.invalidateSize(),50);"
-"if(n==='hist'){loadHist();loadAlerts();}}"
-"async function loadAlerts(){try{const r=await fetch('/api/alerts');const t=await r.text();"
-"document.getElementById('arows').innerHTML=t.trim().split('\\n').reverse().filter(l=>l)"
-".slice(0,200).map(l=>{const p=l.split('\t');"
-"return `<tr><td class=dim>${new Date(+p[0]*1000).toLocaleString()}</td><td><b>${p[1]||''}</b></td><td>${p[2]||''}</td></tr>`;})"
-".join('')||'<tr><td class=dim>no alerts yet</td></tr>';}catch(e){}}"
+"}"
 "function ensureMap(lat,lon,rkm){if(map||typeof L==='undefined')return;"
 "map=L.map('map').setView([lat,lon],8);"
 "map.fitBounds(L.latLng(lat,lon).toBounds(rkm*2000),{padding:[10,10]});"
@@ -505,13 +466,10 @@ static const char INDEX_HTML[] =
 "inParse(c.input_map||'');"
 "document.getElementById('cfgsave').disabled=false;}catch(e){}}"
 "async function saveCfg(){const c={};"
-"['ssid','pass','web_pass','ntfy_topic','mqtt_uri','fa_key','watch_regs','webhook_url','local_adsb','filter_airport','openaip_key','ais_key','carto_key','tile_url'].forEach(k=>{const v=document.getElementById('c_'+k).value;if((k!=='pass'&&k!=='web_pass')||v)c[k]=v;});"
-"c.cpa_alerts=document.getElementById('c_cpa_alerts').value==='1';"
-"c.cpa_all=document.getElementById('c_cpa_all').value==='1';"
+"['ssid','pass','web_pass','mqtt_uri','fa_key','watch_regs','local_adsb','filter_airport','openaip_key','carto_key','tile_url'].forEach(k=>{const v=document.getElementById('c_'+k).value;if((k!=='pass'&&k!=='web_pass')||v)c[k]=v;});"
 "c.filter_apt_exclude=document.getElementById('c_filter_apt_exclude').value==='1';"
 "c.night_enabled=document.getElementById('c_night_enabled').value==='1';"
 "c.night_auto=document.getElementById('c_night_auto').value==='1';"
-"c.ambient_idle_min=+document.getElementById('c_ambient_idle_min').value;"
 "c.alt_min_ft=+document.getElementById('c_alt_min_ft').value;c.alt_max_ft=+document.getElementById('c_alt_max_ft').value;"
 "const pm=id=>{const v=document.getElementById(id).value.split(':');return (+v[0])*60+(+v[1]||0);};"
 "c.night_start_min=pm('c_night_start');c.night_end_min=pm('c_night_end');"
@@ -521,7 +479,6 @@ static const char INDEX_HTML[] =
 "c.rain_overlay=document.getElementById('c_rain_overlay').value==='1';"
 "c.show_route=document.getElementById('c_show_route').value==='1';"
 "c.map_light=document.getElementById('c_map_light').value==='1';"
-"c.retro_map=document.getElementById('c_retro_map').value==='1';"
 "c.clock_12h=document.getElementById('c_clock_12h').value==='1';"
 "c.brightness_ctl=document.getElementById('c_brightness_ctl').value==='1';"
 "c.brightness=Math.min(100,Math.max(5,+document.getElementById('c_brightness').value||100));"
@@ -530,7 +487,6 @@ static const char INDEX_HTML[] =
 "['taf','iss','sonde','ships','airspace'].forEach(k=>c[k+'_enabled']=document.getElementById('c_'+k+'_enabled').value==='1');"
 "['metric_units','metar_decoded','follow_mode','temp_f'].forEach(k=>c[k]=document.getElementById('c_'+k).value==='1');"
 "c.favs=favs.map(f=>f&&f.name?f:{name:'',lat:0,lon:0});"
-"c.amb_style=+document.getElementById('c_amb_style').value;"
 "const num=v=>parseFloat(String(v).replace(',','.'));"
 "const la=num(document.getElementById('c_lat').value),lo=num(document.getElementById('c_lon').value);"
 "if(isFinite(la)&&Math.abs(la)<=90)c.lat=la;if(isFinite(lo)&&Math.abs(lo)<=180)c.lon=lo;"
@@ -539,12 +495,6 @@ static const char INDEX_HTML[] =
 "const st=document.getElementById('cfgstat');st.textContent='saving...';"
 "try{const r=await fetch('/api/config',{method:'POST',body:JSON.stringify(c)});st.textContent=await r.text();}"
 "catch(e){st.textContent='device restarting...'}}"
-"async function loadHist(){const r=await fetch('/api/log');const t=await r.text();"
-"const q=document.getElementById('hq').value.toLowerCase();"
-"document.getElementById('hrows').innerHTML=t.trim().split('\\n').reverse()"
-".filter(l=>l&&l.toLowerCase().includes(q)).slice(0,300).map(l=>{const p=l.split('\t');"
-"return `<tr><td class=dim>${new Date(+p[0]*1000).toLocaleString()}</td><td><b>${p[2]||''}</b></td>"
-"<td class=dim>${p[1]||''}</td><td>${p[3]||''}</td></tr>`;}).join('')||'<tr><td class=dim>empty</td></tr>';}"
 "load();loadCfg();setInterval(load,5000);"
 "async function ota(){const f=document.getElementById('fw').files[0];if(!f)return;"
 "const st=document.getElementById('otastat');st.textContent='uploading...';"
@@ -672,36 +622,24 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "brightness", c->brightness);
     cJSON_AddBoolToObject(root, "brightness_ctl", c->brightness_ctl);
     cJSON_AddBoolToObject(root, "map_light", c->map_light);
-    cJSON_AddBoolToObject(root, "retro_map", c->retro_map);
-    cJSON_AddNumberToObject(root, "amb_style", c->amb_style);
     cJSON_AddNumberToObject(root, "theme", c->theme);
     cJSON_AddNumberToObject(root, "lang", c->lang);
-    cJSON_AddStringToObject(root, "ntfy_topic", c->ntfy_topic);
     cJSON_AddStringToObject(root, "mqtt_uri", c->mqtt_uri);
     cJSON_AddStringToObject(root, "fa_key", c->fa_key);
     cJSON_AddStringToObject(root, "watch_regs", c->watch_regs);
-    cJSON_AddStringToObject(root, "webhook_url", c->webhook_url);
     cJSON_AddStringToObject(root, "local_adsb", c->local_adsb);
     cJSON_AddBoolToObject(root, "local_adsb_use", c->local_adsb_use);
     cJSON_AddBoolToObject(root, "web_pass_set", c->web_pass[0] != '\0');
-    cJSON_AddBoolToObject(root, "cpa_alerts", c->cpa_alerts);
-    cJSON_AddBoolToObject(root, "cpa_all", c->cpa_all);
     cJSON_AddBoolToObject(root, "night_enabled", c->night_enabled);
     cJSON_AddBoolToObject(root, "night_auto", c->night_auto);
     cJSON_AddNumberToObject(root, "night_start_min", c->night_start_min);
     cJSON_AddNumberToObject(root, "night_end_min", c->night_end_min);
-    cJSON_AddNumberToObject(root, "ambient_idle_min", c->ambient_idle_min);
     cJSON_AddStringToObject(root, "filter_airport", c->filter_airport);
     cJSON_AddBoolToObject(root, "filter_apt_exclude", c->filter_apt_exclude);
     cJSON_AddNumberToObject(root, "alt_min_ft", c->alt_min_ft);
     cJSON_AddNumberToObject(root, "alt_max_ft", c->alt_max_ft);
-    cJSON_AddBoolToObject(root, "taf_enabled", c->taf_enabled);
-    cJSON_AddBoolToObject(root, "iss_enabled", c->iss_enabled);
-    cJSON_AddBoolToObject(root, "sonde_enabled", c->sonde_enabled);
-    cJSON_AddBoolToObject(root, "ships_enabled", c->ships_enabled);
     cJSON_AddBoolToObject(root, "airspace_enabled", c->airspace_enabled);
     cJSON_AddStringToObject(root, "openaip_key", c->openaip_key);
-    cJSON_AddStringToObject(root, "ais_key", c->ais_key);
     cJSON_AddStringToObject(root, "carto_key", c->carto_key);
     cJSON_AddStringToObject(root, "tile_url", c->tile_url);
     cJSON_AddStringToObject(root, "input_map", c->input_map);
@@ -745,16 +683,13 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "ssid", c->wifi_ssid);
     cJSON_AddStringToObject(root, "pass", c->wifi_pass);
     cJSON_AddStringToObject(root, "web_pass", c->web_pass);
-    cJSON_AddStringToObject(root, "ntfy_topic", c->ntfy_topic);
     cJSON_AddStringToObject(root, "mqtt_uri", c->mqtt_uri);
     cJSON_AddStringToObject(root, "fa_key", c->fa_key);
     cJSON_AddStringToObject(root, "watch_regs", c->watch_regs);
-    cJSON_AddStringToObject(root, "webhook_url", c->webhook_url);
     cJSON_AddStringToObject(root, "local_adsb", c->local_adsb);
     cJSON_AddBoolToObject(root, "local_adsb_use", c->local_adsb_use);
     cJSON_AddStringToObject(root, "filter_airport", c->filter_airport);
     cJSON_AddStringToObject(root, "openaip_key", c->openaip_key);
-    cJSON_AddStringToObject(root, "ais_key", c->ais_key);
     cJSON_AddStringToObject(root, "carto_key", c->carto_key);
     cJSON_AddStringToObject(root, "tile_url", c->tile_url);
     cJSON_AddStringToObject(root, "input_map", c->input_map);
@@ -770,24 +705,15 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "brightness", c->brightness);
     cJSON_AddBoolToObject(root, "brightness_ctl", c->brightness_ctl);
     cJSON_AddBoolToObject(root, "map_light", c->map_light);
-    cJSON_AddBoolToObject(root, "retro_map", c->retro_map);
-    cJSON_AddNumberToObject(root, "amb_style", c->amb_style);
     cJSON_AddBoolToObject(root, "hide_ground", c->hide_ground);
     cJSON_AddNumberToObject(root, "show_classes", c->show_classes);
-    cJSON_AddBoolToObject(root, "cpa_alerts", c->cpa_alerts);
-    cJSON_AddBoolToObject(root, "cpa_all", c->cpa_all);
     cJSON_AddBoolToObject(root, "filter_apt_exclude", c->filter_apt_exclude);
     cJSON_AddBoolToObject(root, "night_enabled", c->night_enabled);
     cJSON_AddBoolToObject(root, "night_auto", c->night_auto);
     cJSON_AddNumberToObject(root, "night_start_min", c->night_start_min);
     cJSON_AddNumberToObject(root, "night_end_min", c->night_end_min);
-    cJSON_AddNumberToObject(root, "ambient_idle_min", c->ambient_idle_min);
     cJSON_AddNumberToObject(root, "alt_min_ft", c->alt_min_ft);
     cJSON_AddNumberToObject(root, "alt_max_ft", c->alt_max_ft);
-    cJSON_AddBoolToObject(root, "taf_enabled", c->taf_enabled);
-    cJSON_AddBoolToObject(root, "iss_enabled", c->iss_enabled);
-    cJSON_AddBoolToObject(root, "sonde_enabled", c->sonde_enabled);
-    cJSON_AddBoolToObject(root, "ships_enabled", c->ships_enabled);
     cJSON_AddBoolToObject(root, "airspace_enabled", c->airspace_enabled);
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
@@ -828,11 +754,9 @@ static esp_err_t config_post(httpd_req_t *req)
     settings_t *c = settings_get();
     set_str_field(root, "ssid", c->wifi_ssid, sizeof(c->wifi_ssid));
     set_str_field(root, "pass", c->wifi_pass, sizeof(c->wifi_pass));
-    set_str_field(root, "ntfy_topic", c->ntfy_topic, sizeof(c->ntfy_topic));
     set_str_field(root, "mqtt_uri", c->mqtt_uri, sizeof(c->mqtt_uri));
     set_str_field(root, "fa_key", c->fa_key, sizeof(c->fa_key));
     set_str_field(root, "watch_regs", c->watch_regs, sizeof(c->watch_regs));
-    set_str_field(root, "webhook_url", c->webhook_url, sizeof(c->webhook_url));
     set_str_field(root, "local_adsb", c->local_adsb, sizeof(c->local_adsb));
     set_str_field(root, "web_pass", c->web_pass, sizeof(c->web_pass));
     set_str_field(root, "filter_airport", c->filter_airport, sizeof(c->filter_airport));
@@ -862,12 +786,6 @@ static esp_err_t config_post(httpd_req_t *req)
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "local_adsb_use")))) {
         c->local_adsb_use = cJSON_IsTrue(j);
     }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "retro_map")))) {
-        c->retro_map = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "amb_style")))) {
-        c->amb_style = j->valueint == 1 ? 1 : 0;
-    }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "hide_ground")))) {
         c->hide_ground = cJSON_IsTrue(j);
     }
@@ -876,12 +794,6 @@ static esp_err_t config_post(httpd_req_t *req)
         if (c->show_classes == 0) {
             c->show_classes = FCLS_ALL_MASK;   /* nothing = everything */
         }
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "cpa_alerts")))) {
-        c->cpa_alerts = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "cpa_all")))) {
-        c->cpa_all = cJSON_IsTrue(j);
     }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "filter_apt_exclude")))) {
         c->filter_apt_exclude = cJSON_IsTrue(j);
@@ -898,32 +810,16 @@ static esp_err_t config_post(httpd_req_t *req)
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "night_end_min")))) {
         c->night_end_min = (int)j->valuedouble;
     }
-    if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "ambient_idle_min")))) {
-        c->ambient_idle_min = (int)j->valuedouble;
-    }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "alt_min_ft")))) {
         c->alt_min_ft = (int)j->valuedouble;
     }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "alt_max_ft")))) {
         c->alt_max_ft = (int)j->valuedouble;
     }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "taf_enabled")))) {
-        c->taf_enabled = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "iss_enabled")))) {
-        c->iss_enabled = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "sonde_enabled")))) {
-        c->sonde_enabled = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "ships_enabled")))) {
-        c->ships_enabled = cJSON_IsTrue(j);
-    }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "airspace_enabled")))) {
         c->airspace_enabled = cJSON_IsTrue(j);
     }
     set_str_field(root, "openaip_key", c->openaip_key, sizeof(c->openaip_key));
-    set_str_field(root, "ais_key", c->ais_key, sizeof(c->ais_key));
     set_str_field(root, "carto_key", c->carto_key, sizeof(c->carto_key));
     set_str_field(root, "tile_url", c->tile_url, sizeof(c->tile_url));
     set_str_field(root, "input_map", c->input_map, sizeof(c->input_map));

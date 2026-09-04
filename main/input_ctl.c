@@ -130,8 +130,8 @@ static void save_later(void)
 /* ---------- actions ---------- */
 
 static const char *k_actions =
-    "next_view,prev_view,next_ac,prev_ac,zoom_in,zoom_out,wake,"
-    "list_planes,list_ships,list_all,toggle_rain,follow_toggle,"
+    "next_ac,prev_ac,zoom_in,zoom_out,wake,"
+    "toggle_rain,follow_toggle,"
     "alt_min_up,alt_min_down,alt_max_up,alt_max_down,"
     "brightness_up,brightness_down";
 
@@ -184,9 +184,8 @@ bool input_ctl_dispatch(const char *action)
         return false;
     }
     /* UI-owned actions run under the LVGL lock */
-    static const char *k_ui[] = { "next_view", "prev_view", "next_ac", "prev_ac",
-                                  "zoom_in", "zoom_out", "wake",
-                                  "list_planes", "list_ships", "list_all" };
+    static const char *k_ui[] = { "next_ac", "prev_ac",
+                                  "zoom_in", "zoom_out", "wake" };
     for (size_t i = 0; i < sizeof(k_ui) / sizeof(k_ui[0]); i++) {
         if (strcmp(action, k_ui[i]) == 0) {
             bool ok = false;

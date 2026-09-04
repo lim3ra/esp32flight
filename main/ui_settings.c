@@ -37,25 +37,23 @@
 static lv_obj_t *s_overlay;
 static lv_obj_t *s_kb;
 static lv_obj_t *s_ta_ssid, *s_ta_pass, *s_ta_city, *s_ta_lat, *s_ta_lon;
-static lv_obj_t *s_ta_watch, *s_ta_ntfy, *s_ta_mqtt, *s_ta_fa, *s_ta_webhook, *s_ta_ladsb;
+static lv_obj_t *s_ta_watch, *s_ta_mqtt, *s_ta_fa, *s_ta_ladsb;
 static lv_obj_t *s_ta_webpass;
 static lv_obj_t *s_ta_fltapt, *s_ta_altmin, *s_ta_altmax;
-static lv_obj_t *s_dd_cpa_scope, *s_dd_aptmode;
-static lv_obj_t *s_ta_night_from, *s_ta_night_to, *s_ta_amb_idle;
+static lv_obj_t *s_dd_aptmode;
+static lv_obj_t *s_ta_night_from, *s_ta_night_to;
 static lv_obj_t *s_dd_networks, *s_dd_cities, *s_dd_theme, *s_dd_lang;
-static lv_obj_t *s_sw_auto, *s_sw_ground, *s_sw_cpa, *s_sw_night;
+static lv_obj_t *s_sw_auto, *s_sw_ground, *s_sw_night;
 static lv_obj_t *s_sw_cls[FCLS_COUNT];
 static lv_obj_t *s_sw_rain;
-static lv_obj_t *s_sw_airsp, *s_sw_iss, *s_sw_sonde, *s_sw_ships, *s_sw_taf;
-static lv_obj_t *s_ta_oaip, *s_ta_ais;
+static lv_obj_t *s_sw_airsp;
+static lv_obj_t *s_ta_oaip;
 static lv_obj_t *s_ta_carto, *s_ta_tileurl;
 static lv_obj_t *s_sw_route;
 static lv_obj_t *s_slider_bright, *s_sw_clk12, *s_sw_brightctl;
 static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle, *s_sw_nauto;
-static lv_obj_t *s_dd_amb_style;
 static lv_obj_t *s_sw_map_light;
 static lv_obj_t *s_sw_ladsb;
-static lv_obj_t *s_sw_retro_map;
 static lv_obj_t *s_slider_radius, *s_radius_label;
 
 static bool s_scan_busy;
@@ -91,7 +89,7 @@ static void kb_event_cb(lv_event_t *e)
 static void ta_focus_cb(lv_event_t *e)
 {
     lv_obj_t *ta = lv_event_get_target(e);
-    bool numeric = (ta == s_ta_lat || ta == s_ta_lon || ta == s_ta_amb_idle ||
+    bool numeric = (ta == s_ta_lat || ta == s_ta_lon ||
                     ta == s_ta_night_from || ta == s_ta_night_to);
     lv_keyboard_set_mode(s_kb, numeric ? LV_KEYBOARD_MODE_NUMBER : LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_keyboard_set_textarea(s_kb, ta);
@@ -323,7 +321,6 @@ static void save_cb(lv_event_t *e)
     if (cfg->show_classes == 0) {   /* nothing checked = show everything */
         cfg->show_classes = FCLS_ALL_MASK;
     }
-    cfg->cpa_alerts = lv_obj_has_state(s_sw_cpa, LV_STATE_CHECKED);
     cfg->night_enabled = lv_obj_has_state(s_sw_night, LV_STATE_CHECKED);
     cfg->night_start_min = parse_hhmm(lv_textarea_get_text(s_ta_night_from),
                                       cfg->night_start_min);
@@ -336,7 +333,6 @@ static void save_cb(lv_event_t *e)
     snprintf(hhmm, sizeof(hhmm), "%02d:%02d",
              cfg->night_end_min / 60, cfg->night_end_min % 60);
     lv_textarea_set_text(s_ta_night_to, hhmm);
-    cfg->ambient_idle_min = atoi(lv_textarea_get_text(s_ta_amb_idle));
     cfg->rain_overlay = lv_obj_has_state(s_sw_rain, LV_STATE_CHECKED);
     cfg->show_route = lv_obj_has_state(s_sw_route, LV_STATE_CHECKED);
     cfg->clock_12h = lv_obj_has_state(s_sw_clk12, LV_STATE_CHECKED);
@@ -349,17 +345,10 @@ static void save_cb(lv_event_t *e)
     }
 #endif
     cfg->airspace_enabled = lv_obj_has_state(s_sw_airsp, LV_STATE_CHECKED);
-    cfg->iss_enabled = lv_obj_has_state(s_sw_iss, LV_STATE_CHECKED);
-    cfg->sonde_enabled = lv_obj_has_state(s_sw_sonde, LV_STATE_CHECKED);
-    cfg->ships_enabled = lv_obj_has_state(s_sw_ships, LV_STATE_CHECKED);
-    strlcpy(cfg->ais_key, lv_textarea_get_text(s_ta_ais), sizeof(cfg->ais_key));
-    cfg->taf_enabled = lv_obj_has_state(s_sw_taf, LV_STATE_CHECKED);
     strlcpy(cfg->openaip_key, lv_textarea_get_text(s_ta_oaip), sizeof(cfg->openaip_key));
     strlcpy(cfg->carto_key, lv_textarea_get_text(s_ta_carto), sizeof(cfg->carto_key));
     strlcpy(cfg->tile_url, lv_textarea_get_text(s_ta_tileurl), sizeof(cfg->tile_url));
-    cfg->amb_style = (uint8_t)lv_dropdown_get_selected(s_dd_amb_style);
     cfg->map_light = lv_obj_has_state(s_sw_map_light, LV_STATE_CHECKED);
-    cfg->retro_map = lv_obj_has_state(s_sw_retro_map, LV_STATE_CHECKED);
     {
         int u = lv_dropdown_get_selected(s_dd_units);
         cfg->metric_units = u == 2;
@@ -369,10 +358,8 @@ static void save_cb(lv_event_t *e)
     cfg->follow_mode = !lv_obj_has_state(s_sw_cycle, LV_STATE_CHECKED);
     cfg->night_auto = lv_obj_has_state(s_sw_nauto, LV_STATE_CHECKED);
     strlcpy(cfg->watch_regs, lv_textarea_get_text(s_ta_watch), sizeof(cfg->watch_regs));
-    strlcpy(cfg->ntfy_topic, lv_textarea_get_text(s_ta_ntfy), sizeof(cfg->ntfy_topic));
     strlcpy(cfg->mqtt_uri, lv_textarea_get_text(s_ta_mqtt), sizeof(cfg->mqtt_uri));
     strlcpy(cfg->fa_key, lv_textarea_get_text(s_ta_fa), sizeof(cfg->fa_key));
-    strlcpy(cfg->webhook_url, lv_textarea_get_text(s_ta_webhook), sizeof(cfg->webhook_url));
     strlcpy(cfg->local_adsb, lv_textarea_get_text(s_ta_ladsb), sizeof(cfg->local_adsb));
     cfg->local_adsb_use = lv_obj_has_state(s_sw_ladsb, LV_STATE_CHECKED);
 #ifndef APKFLIGHT   /* no web panel in the app - the field doesn't exist */
@@ -382,7 +369,6 @@ static void save_cb(lv_event_t *e)
     cfg->alt_min_ft = atoi(lv_textarea_get_text(s_ta_altmin));
     cfg->alt_max_ft = atoi(lv_textarea_get_text(s_ta_altmax));
     cfg->filter_apt_exclude = lv_dropdown_get_selected(s_dd_aptmode) == 1;
-    cfg->cpa_all = lv_dropdown_get_selected(s_dd_cpa_scope) == 1;
     cfg->theme = lv_dropdown_get_selected(s_dd_theme);
     cfg->lang = lv_dropdown_get_selected(s_dd_lang);
     ESP_LOGI("settings", "device save: lang=%d theme=%d fixed=%d",
@@ -664,65 +650,44 @@ void ui_settings_open(void)
     s_ta_watch = add_textarea(p, 0, 212, 740, cfg->watch_regs, false);
     add_hint(p, L()->lbl_watch, 0, 258, 740);
 
-    add_section(p, L()->sec_alerts, 292);
-    s_sw_cpa = add_switch(p, L()->cpa_lbl, 0, 324, cfg->cpa_alerts);
-    s_dd_cpa_scope = add_dropdown(p, 500, 320, 240, NULL);
-    lv_dropdown_set_options(s_dd_cpa_scope, L()->cpa_scope_opts);
-    lv_dropdown_set_selected(s_dd_cpa_scope, cfg->cpa_all ? 1 : 0);
-
-    add_section(p, L()->sec_classes, 380);
+    add_section(p, L()->sec_classes, 292);
     for (int i = 0; i < FCLS_COUNT; i++) {
         s_sw_cls[i] = add_switch(p, L()->cls_names[i], (i % 2) * 380,
-                                 412 + (i / 2) * 52,
+                                 324 + (i / 2) * 52,
                                  (cfg->show_classes >> i) & 1);
     }
 
-    add_section(p, L()->sec_layers, 580);
-    s_sw_rain = add_switch(p, L()->rain_lbl, 0, 612, cfg->rain_overlay);
-    s_sw_airsp = add_switch(p, L()->airspace_lbl, 380, 612, cfg->airspace_enabled);
-    s_sw_iss = add_switch(p, L()->iss_lbl, 0, 664, cfg->iss_enabled);
-    s_sw_sonde = add_switch(p, L()->sonde_lbl, 380, 664, cfg->sonde_enabled);
-    s_sw_ships = add_switch(p, L()->ships_lbl, 0, 716, cfg->ships_enabled);
-    s_sw_taf = add_switch(p, L()->taf_lbl, 380, 716, cfg->taf_enabled);
-    s_sw_route = add_switch(p, L()->route_lbl, 0, 768, cfg->show_route);
+    add_section(p, L()->sec_layers, 492);
+    s_sw_rain = add_switch(p, L()->rain_lbl, 0, 524, cfg->rain_overlay);
+    s_sw_airsp = add_switch(p, L()->airspace_lbl, 380, 524, cfg->airspace_enabled);
+    s_sw_route = add_switch(p, L()->route_lbl, 0, 576, cfg->show_route);
 
     /* --- Integrations --- */
     p = tab_page(tv, L()->tab_integr);
-    add_section(p, L()->sec_notify, 0);
-    add_label(p, L()->lbl_ntfy, 0, 32);
-    s_ta_ntfy = add_textarea(p, 0, 56, 360, cfg->ntfy_topic, false);
-    add_hint(p, L()->hint_ntfy, 0, 102, 360);
-    add_label(p, L()->lbl_webhook, 380, 32);
-    s_ta_webhook = add_textarea(p, 380, 56, 360, cfg->webhook_url, false);
-    add_hint(p, L()->hint_webhook, 380, 102, 360);
+    add_section(p, L()->sec_datasrc, 0);
+    s_sw_ladsb = add_switch(p, L()->ladsb_use_lbl, 380, -6, cfg->local_adsb_use);
+    add_label(p, L()->lbl_fa, 0, 32);
+    s_ta_fa = add_textarea(p, 0, 56, 360, cfg->fa_key, false);
+    add_hint(p, L()->hint_fa, 0, 102, 360);
+    add_label(p, L()->lbl_ladsb, 380, 32);
+    s_ta_ladsb = add_textarea(p, 380, 56, 360, cfg->local_adsb, false);
+    add_hint(p, L()->hint_ladsb, 380, 102, 360);
+    add_label(p, L()->lbl_oaip, 0, 150);
+    s_ta_oaip = add_textarea(p, 0, 174, 360, cfg->openaip_key, false);
+    add_hint(p, L()->hint_oaip, 0, 220, 360);
 
-    add_section(p, L()->sec_datasrc, 154);
-    s_sw_ladsb = add_switch(p, L()->ladsb_use_lbl, 380, 148, cfg->local_adsb_use);
-    add_label(p, L()->lbl_fa, 0, 186);
-    s_ta_fa = add_textarea(p, 0, 210, 360, cfg->fa_key, false);
-    add_hint(p, L()->hint_fa, 0, 256, 360);
-    add_label(p, L()->lbl_ladsb, 380, 186);
-    s_ta_ladsb = add_textarea(p, 380, 210, 360, cfg->local_adsb, false);
-    add_hint(p, L()->hint_ladsb, 380, 256, 360);
-    add_label(p, L()->lbl_oaip, 0, 304);
-    s_ta_oaip = add_textarea(p, 0, 328, 360, cfg->openaip_key, false);
-    add_hint(p, L()->hint_oaip, 0, 374, 360);
-    add_label(p, L()->lbl_ais, 380, 304);
-    s_ta_ais = add_textarea(p, 380, 328, 360, cfg->ais_key, false);
-    add_hint(p, L()->hint_ais, 380, 374, 360);
+    add_section(p, L()->sec_maptiles, 272);
+    add_label(p, L()->lbl_carto, 0, 304);
+    s_ta_carto = add_textarea(p, 0, 328, 360, cfg->carto_key, false);
+    add_hint(p, L()->hint_carto, 0, 374, 360);
+    add_label(p, L()->lbl_tileurl, 380, 304);
+    s_ta_tileurl = add_textarea(p, 380, 328, 360, cfg->tile_url, false);
+    add_hint(p, L()->hint_tileurl, 380, 374, 360);
 
-    add_section(p, L()->sec_maptiles, 426);
-    add_label(p, L()->lbl_carto, 0, 458);
-    s_ta_carto = add_textarea(p, 0, 482, 360, cfg->carto_key, false);
-    add_hint(p, L()->hint_carto, 0, 528, 360);
-    add_label(p, L()->lbl_tileurl, 380, 458);
-    s_ta_tileurl = add_textarea(p, 380, 482, 360, cfg->tile_url, false);
-    add_hint(p, L()->hint_tileurl, 380, 528, 360);
-
-    add_section(p, L()->sec_smart, 580);
-    add_label(p, L()->lbl_mqtt, 0, 612);
-    s_ta_mqtt = add_textarea(p, 0, 636, 360, cfg->mqtt_uri, false);
-    add_hint(p, L()->hint_mqtt, 0, 682, 740);
+    add_section(p, L()->sec_smart, 426);
+    add_label(p, L()->lbl_mqtt, 0, 458);
+    s_ta_mqtt = add_textarea(p, 0, 482, 360, cfg->mqtt_uri, false);
+    add_hint(p, L()->hint_mqtt, 0, 528, 740);
 
     /* --- System --- */
     p = tab_page(tv, L()->tab_system);
@@ -757,16 +722,8 @@ void ui_settings_open(void)
     s_ta_night_to = add_textarea(p, 510, 252, 110, buf, false);
     s_sw_nauto = add_switch(p, L()->night_auto_lbl, 0, 306, cfg->night_auto);
     s_sw_cycle = add_switch(p, L()->follow_lbl, 0, 358, !cfg->follow_mode);
-    add_label(p, L()->amb_idle_lbl, 0, 416);
-    snprintf(buf, sizeof(buf), "%d", cfg->ambient_idle_min);
-    s_ta_amb_idle = add_textarea(p, 630, 410, 110, buf, false);
-    add_label(p, L()->amb_style_lbl, 0, 472);
-    s_dd_amb_style = add_dropdown(p, 520, 466, 220, NULL);
-    lv_dropdown_set_options(s_dd_amb_style, L()->amb_style_opts);
-    lv_dropdown_set_selected(s_dd_amb_style, cfg->amb_style == 1 ? 1 : 0);
-    s_sw_map_light = add_switch(p, L()->map_light_lbl, 0, 524, cfg->map_light);
-    s_sw_retro_map = add_switch(p, L()->retro_map_lbl, 380, 524, cfg->retro_map);
-    s_sw_clk12 = add_switch(p, L()->clk12_lbl, 0, 576, cfg->clock_12h);
+    s_sw_map_light = add_switch(p, L()->map_light_lbl, 0, 416, cfg->map_light);
+    s_sw_clk12 = add_switch(p, L()->clk12_lbl, 380, 416, cfg->clock_12h);
     s_slider_bright = NULL;
     s_sw_brightctl = NULL;
 #ifndef APKFLIGHT
