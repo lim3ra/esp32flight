@@ -196,8 +196,10 @@ static const char INDEX_HTML[] =
 "<div><label>12-hour clock (AM/PM)</label><select id='c_clock_12h'><option value='0'>24 h</option><option value='1'>12 h AM/PM</option></select></div>"
 "<div><label>Brightness control</label><select id='c_brightness_ctl'><option value='0'>off (default)</option><option value='1'>on</option></select>"
 "<div class='help'>Master switch for backlight dimming. Off keeps stock full-brightness behavior on every board.</div></div>"
-"<div><label>Brightness (5-100)</label><input id='c_brightness' type='number' min='5' max='100'>"
-"<div class='help'>Needs brightness control on and a dimmable backlight; CH422G boards (Waveshare 800x480) are on/off.</div></div>"
+"<div><label>Day brightness (5-100)</label><input id='c_bright_day' type='number' min='5' max='100'>"
+"<div class='help'>Applied outside the night window. Needs brightness control on and a dimmable backlight; CH422G boards (Waveshare 800x480) are on/off.</div></div>"
+"<div><label>Night brightness (5-100)</label><input id='c_bright_night' type='number' min='5' max='100'>"
+"<div class='help'>Applied inside the night window. The panel dims rather than switching off, so the map stays readable.</div></div>"
 "<div class='help'>Lifts the dark map style for readability. New tiles only; the device reloads its map after a restart.</div></div>"
 "<div><label>Theme</label><select id='c_theme'><option value='0'>Dark</option><option value='1'>Light</option><option value='2'>Black</option><option value='3'>Nord</option><option value='4'>Solarized</option><option value='5'>Purple</option><option value='6'>Forest</option></select></div>"
 "<div><label>Language</label><select id='c_lang'><option value='0'>English</option><option value='1'>Polski</option></select></div>"
@@ -206,9 +208,8 @@ static const char INDEX_HTML[] =
 "<div><label>METAR style</label><select id='c_metar_decoded'><option value='0'>raw</option><option value='1'>decoded</option></select></div>"
 "<div><label>Auto-cycle flights</label><select id='c_follow_mode'><option value='0'>on (default)</option><option value='1'>off, follow selection</option></select>"
 "<div class='help'>Off keeps the selected flight on screen until you pick another one.</div></div>"
-"<div><label>Night mode</label><select id='c_night_enabled'><option value='0'>off</option><option value='1'>on</option></select>"
+
 "<div class='help'>Backlight turns off during the quiet hours below once the screen has been idle a minute; a tap wakes it.</div></div>"
-"<div><label>Night hours</label><select id='c_night_auto'><option value='0'>fixed hours below</option><option value='1'>auto: sunset to sunrise</option></select></div>"
 "<div><label>Night from</label><input id='c_night_start' type='time'></div>"
 "<div><label>Night until</label><input id='c_night_end' type='time'></div>"
 "</div></div>"
@@ -416,7 +417,7 @@ static const char INDEX_HTML[] =
 "try{const r=await fetch('/api/config',{method:'POST',body:t});"
 "document.getElementById('bkstat').textContent=r.ok?'restored - device restarting':'restore failed';}"
 "catch(e){document.getElementById('bkstat').textContent='restore failed'}}"
-"const IN_ACTS=['next_view','prev_view','next_ac','prev_ac','zoom_in','zoom_out','wake','list_planes','list_ships','list_all','toggle_rain','follow_toggle','alt_min_up','alt_min_down','alt_max_up','alt_max_down','brightness_up','brightness_down'];"
+"const IN_ACTS=['next_ac','prev_ac','zoom_in','zoom_out','wake','toggle_rain','follow_toggle','alt_min_up','alt_min_down','alt_max_up','alt_max_down','brightness_up','brightness_down'];"
 "let inRows=[];"
 "function inSel(v){return '<select class=\"in_a\">'+IN_ACTS.map(a=>`<option ${a===v?'selected':''}>${a}</option>`).join('')+'</select>';}"
 "function inRender(){const el=document.getElementById('inrows');if(!el)return;el.innerHTML=inRows.map((r,i)=>"
@@ -460,16 +461,15 @@ static const char INDEX_HTML[] =
 "document.getElementById('c_theme').value=c.theme;document.getElementById('c_lang').value=c.lang;"
 "const cm=c.show_classes==null?31:c.show_classes;for(let i=0;i<5;i++)document.getElementById('c_cls'+i).checked=!!(cm>>i&1);"
 "const mm=v=>`${String(Math.floor(v/60)).padStart(2,'0')}:${String(v%60).padStart(2,'0')}`;"
-"document.getElementById('c_night_start').value=mm(c.night_start_min||1380);"
-"document.getElementById('c_night_end').value=mm(c.night_end_min||390);"
+"document.getElementById('c_night_start').value=mm(c.night_start_min??1320);"
+"document.getElementById('c_night_end').value=mm(c.night_end_min??420);"
 "favs=(c.favs||[]).map(f=>f&&f.name?f:{});favRender();"
 "inParse(c.input_map||'');"
 "document.getElementById('cfgsave').disabled=false;}catch(e){}}"
 "async function saveCfg(){const c={};"
 "['ssid','pass','web_pass','mqtt_uri','fa_key','watch_regs','local_adsb','filter_airport','openaip_key','carto_key','tile_url'].forEach(k=>{const v=document.getElementById('c_'+k).value;if((k!=='pass'&&k!=='web_pass')||v)c[k]=v;});"
 "c.filter_apt_exclude=document.getElementById('c_filter_apt_exclude').value==='1';"
-"c.night_enabled=document.getElementById('c_night_enabled').value==='1';"
-"c.night_auto=document.getElementById('c_night_auto').value==='1';"
+
 "c.alt_min_ft=+document.getElementById('c_alt_min_ft').value;c.alt_max_ft=+document.getElementById('c_alt_max_ft').value;"
 "const pm=id=>{const v=document.getElementById(id).value.split(':');return (+v[0])*60+(+v[1]||0);};"
 "c.night_start_min=pm('c_night_start');c.night_end_min=pm('c_night_end');"
@@ -481,7 +481,8 @@ static const char INDEX_HTML[] =
 "c.map_light=document.getElementById('c_map_light').value==='1';"
 "c.clock_12h=document.getElementById('c_clock_12h').value==='1';"
 "c.brightness_ctl=document.getElementById('c_brightness_ctl').value==='1';"
-"c.brightness=Math.min(100,Math.max(5,+document.getElementById('c_brightness').value||100));"
+"c.bright_day=Math.min(100,Math.max(5,+document.getElementById('c_bright_day').value||100));"
+"c.bright_night=Math.min(100,Math.max(5,+document.getElementById('c_bright_night').value||5));"
 "c.input_map=inSerialize();"
 "c.local_adsb_use=document.getElementById('c_local_adsb_use').value==='1';"
 "['taf','iss','sonde','ships','airspace'].forEach(k=>c[k+'_enabled']=document.getElementById('c_'+k+'_enabled').value==='1');"
@@ -620,6 +621,8 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "show_route", c->show_route);
     cJSON_AddBoolToObject(root, "clock_12h", c->clock_12h);
     cJSON_AddNumberToObject(root, "brightness", c->brightness);
+    cJSON_AddNumberToObject(root, "bright_day", c->bright_day);
+    cJSON_AddNumberToObject(root, "bright_night", c->bright_night);
     cJSON_AddBoolToObject(root, "brightness_ctl", c->brightness_ctl);
     cJSON_AddBoolToObject(root, "map_light", c->map_light);
     cJSON_AddNumberToObject(root, "theme", c->theme);
@@ -630,8 +633,6 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "local_adsb", c->local_adsb);
     cJSON_AddBoolToObject(root, "local_adsb_use", c->local_adsb_use);
     cJSON_AddBoolToObject(root, "web_pass_set", c->web_pass[0] != '\0');
-    cJSON_AddBoolToObject(root, "night_enabled", c->night_enabled);
-    cJSON_AddBoolToObject(root, "night_auto", c->night_auto);
     cJSON_AddNumberToObject(root, "night_start_min", c->night_start_min);
     cJSON_AddNumberToObject(root, "night_end_min", c->night_end_min);
     cJSON_AddStringToObject(root, "filter_airport", c->filter_airport);
@@ -703,13 +704,13 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "show_route", c->show_route);
     cJSON_AddBoolToObject(root, "clock_12h", c->clock_12h);
     cJSON_AddNumberToObject(root, "brightness", c->brightness);
+    cJSON_AddNumberToObject(root, "bright_day", c->bright_day);
+    cJSON_AddNumberToObject(root, "bright_night", c->bright_night);
     cJSON_AddBoolToObject(root, "brightness_ctl", c->brightness_ctl);
     cJSON_AddBoolToObject(root, "map_light", c->map_light);
     cJSON_AddBoolToObject(root, "hide_ground", c->hide_ground);
     cJSON_AddNumberToObject(root, "show_classes", c->show_classes);
     cJSON_AddBoolToObject(root, "filter_apt_exclude", c->filter_apt_exclude);
-    cJSON_AddBoolToObject(root, "night_enabled", c->night_enabled);
-    cJSON_AddBoolToObject(root, "night_auto", c->night_auto);
     cJSON_AddNumberToObject(root, "night_start_min", c->night_start_min);
     cJSON_AddNumberToObject(root, "night_end_min", c->night_end_min);
     cJSON_AddNumberToObject(root, "alt_min_ft", c->alt_min_ft);
@@ -776,6 +777,15 @@ static esp_err_t config_post(httpd_req_t *req)
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "brightness_ctl")))) {
         c->brightness_ctl = cJSON_IsTrue(j);
     }
+    for (int k = 0; k < 2; k++) {
+        const char *nm = k == 0 ? "bright_day" : "bright_night";
+        if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, nm)))) {
+            int v = (int)j->valuedouble;
+            if (v < 5) v = 5;
+            if (v > 100) v = 100;
+            *(k == 0 ? &c->bright_day : &c->bright_night) = (uint8_t)v;
+        }
+    }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "brightness")))) {
         int b = j->valueint;
         c->brightness = (uint8_t)(b < 5 ? 5 : b > 100 ? 100 : b);
@@ -797,12 +807,6 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "filter_apt_exclude")))) {
         c->filter_apt_exclude = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "night_enabled")))) {
-        c->night_enabled = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "night_auto")))) {
-        c->night_auto = cJSON_IsTrue(j);
     }
     if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "night_start_min")))) {
         c->night_start_min = (int)j->valuedouble;

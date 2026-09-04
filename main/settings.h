@@ -25,9 +25,12 @@ typedef struct {
     bool   local_adsb_use;  /* off = internet sources despite a saved URL (#17) */
     bool   temp_f;          /* header weather in Fahrenheit (#25) */
     char   web_pass[33];    /* HTTP Basic Auth for the web panel, empty = open */
-    bool   night_enabled;
+    /* One night window, two brightness levels. Replaces the old blackout:
+     * the panel dims instead of switching off, so the map stays readable. */
     int    night_start_min; /* minutes from midnight, local */
     int    night_end_min;
+    uint8_t bright_day;     /* 5..100, outside the window */
+    uint8_t bright_night;   /* 5..100, inside it */
     char   filter_airport[8]; /* airport filter (ICAO/IATA), empty=off */
     bool   filter_apt_exclude; /* false: show only that airport, true: hide it */
     int    alt_min_ft;        /* altitude band filter, 0 = no bound */
@@ -48,14 +51,9 @@ typedef struct {
     bool    metric_units;     /* m + km/h instead of ft + kt */
     bool    metar_decoded;    /* human-readable METAR instead of raw */
     bool    follow_mode;      /* stick to the selected aircraft, no auto-cycle */
-    bool    night_auto;       /* night hours follow local sunset/sunrise */
     char    fav_name[3][24];  /* favorite locations, empty name = free slot */
     double  fav_lat[3], fav_lon[3];
     bool    map_light;        /* lift dark map tiles for readability (#10) */
-    bool    bsched_on;        /* timed brightness schedule */
-    int16_t bsched_from[2];   /* minutes from midnight, local; may wrap */
-    int16_t bsched_to[2];
-    uint8_t bsched_pct[2];    /* 1-100 */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

@@ -43,15 +43,15 @@ static lv_obj_t *s_ta_fltapt, *s_ta_altmin, *s_ta_altmax;
 static lv_obj_t *s_dd_aptmode;
 static lv_obj_t *s_ta_night_from, *s_ta_night_to;
 static lv_obj_t *s_dd_networks, *s_dd_cities, *s_dd_theme, *s_dd_lang;
-static lv_obj_t *s_sw_auto, *s_sw_ground, *s_sw_night;
+static lv_obj_t *s_sw_auto, *s_sw_ground;
 static lv_obj_t *s_sw_cls[FCLS_COUNT];
 static lv_obj_t *s_sw_rain;
 static lv_obj_t *s_sw_airsp;
 static lv_obj_t *s_ta_oaip;
 static lv_obj_t *s_ta_carto, *s_ta_tileurl;
 static lv_obj_t *s_sw_route;
-static lv_obj_t *s_slider_bright, *s_sw_clk12, *s_sw_brightctl;
-static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle, *s_sw_nauto;
+static lv_obj_t *s_slider_day, *s_slider_night, *s_sw_clk12, *s_sw_brightctl;
+static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle;
 static lv_obj_t *s_sw_map_light;
 static lv_obj_t *s_sw_ladsb;
 static lv_obj_t *s_slider_radius, *s_radius_label;
@@ -241,7 +241,8 @@ static void brightness_cb(lv_event_t *e)
 {
     lv_obj_t *sl = lv_event_get_target(e);
     /* live preview only when the master switch is armed (either already
-     * saved, or toggled on right now on this screen) */
+     * saved, or toggled on right now on this screen). Dragging either
+     * slider previews that level, so the night one can be judged by eye. */
     if (settings_get()->brightness_ctl ||
         (s_sw_brightctl != NULL && lv_obj_has_state(s_sw_brightctl, LV_STATE_CHECKED))) {
         waveshare_rgb_lcd_bl_pct(lv_slider_get_value(sl));
@@ -321,7 +322,6 @@ static void save_cb(lv_event_t *e)
     if (cfg->show_classes == 0) {   /* nothing checked = show everything */
         cfg->show_classes = FCLS_ALL_MASK;
     }
-    cfg->night_enabled = lv_obj_has_state(s_sw_night, LV_STATE_CHECKED);
     cfg->night_start_min = parse_hhmm(lv_textarea_get_text(s_ta_night_from),
                                       cfg->night_start_min);
     cfg->night_end_min = parse_hhmm(lv_textarea_get_text(s_ta_night_to),
@@ -337,8 +337,9 @@ static void save_cb(lv_event_t *e)
     cfg->show_route = lv_obj_has_state(s_sw_route, LV_STATE_CHECKED);
     cfg->clock_12h = lv_obj_has_state(s_sw_clk12, LV_STATE_CHECKED);
 #ifndef APKFLIGHT
-    if (s_slider_bright != NULL) {
-        cfg->brightness = (uint8_t)lv_slider_get_value(s_slider_bright);
+    if (s_slider_day != NULL) {
+        cfg->bright_day = (uint8_t)lv_slider_get_value(s_slider_day);
+        cfg->bright_night = (uint8_t)lv_slider_get_value(s_slider_night);
     }
     if (s_sw_brightctl != NULL) {
         cfg->brightness_ctl = lv_obj_has_state(s_sw_brightctl, LV_STATE_CHECKED);
@@ -356,7 +357,6 @@ static void save_cb(lv_event_t *e)
     }
     cfg->metar_decoded = lv_dropdown_get_selected(s_dd_metar) == 1;
     cfg->follow_mode = !lv_obj_has_state(s_sw_cycle, LV_STATE_CHECKED);
-    cfg->night_auto = lv_obj_has_state(s_sw_nauto, LV_STATE_CHECKED);
     strlcpy(cfg->watch_regs, lv_textarea_get_text(s_ta_watch), sizeof(cfg->watch_regs));
     strlcpy(cfg->mqtt_uri, lv_textarea_get_text(s_ta_mqtt), sizeof(cfg->mqtt_uri));
     strlcpy(cfg->fa_key, lv_textarea_get_text(s_ta_fa), sizeof(cfg->fa_key));
@@ -713,29 +713,36 @@ void ui_settings_open(void)
     lv_dropdown_set_selected(s_dd_metar, cfg->metar_decoded ? 1 : 0);
 
     add_section(p, L()->sec_screen, 202);
-    s_sw_night = add_switch(p, L()->night_lbl, 0, 234, cfg->night_enabled);
-    add_label(p, L()->night_from, 380, 228);
+    add_label(p, L()->night_from, 0, 228);
     snprintf(buf, sizeof(buf), "%02d:%02d", cfg->night_start_min / 60, cfg->night_start_min % 60);
-    s_ta_night_from = add_textarea(p, 380, 252, 110, buf, false);
-    add_label(p, L()->night_to, 510, 228);
+    s_ta_night_from = add_textarea(p, 0, 252, 110, buf, false);
+    add_label(p, L()->night_to, 130, 228);
     snprintf(buf, sizeof(buf), "%02d:%02d", cfg->night_end_min / 60, cfg->night_end_min % 60);
-    s_ta_night_to = add_textarea(p, 510, 252, 110, buf, false);
-    s_sw_nauto = add_switch(p, L()->night_auto_lbl, 0, 306, cfg->night_auto);
-    s_sw_cycle = add_switch(p, L()->follow_lbl, 0, 358, !cfg->follow_mode);
-    s_sw_map_light = add_switch(p, L()->map_light_lbl, 0, 416, cfg->map_light);
-    s_sw_clk12 = add_switch(p, L()->clk12_lbl, 380, 416, cfg->clock_12h);
-    s_slider_bright = NULL;
+    s_ta_night_to = add_textarea(p, 130, 252, 110, buf, false);
+    s_sw_cycle = add_switch(p, L()->follow_lbl, 0, 316, !cfg->follow_mode);
+    s_sw_map_light = add_switch(p, L()->map_light_lbl, 0, 368, cfg->map_light);
+    s_sw_clk12 = add_switch(p, L()->clk12_lbl, 380, 368, cfg->clock_12h);
+    s_slider_day = NULL;
+    s_slider_night = NULL;
     s_sw_brightctl = NULL;
 #ifndef APKFLIGHT
     if (waveshare_rgb_lcd_bl_dimmable()) {
-        s_sw_brightctl = add_switch(p, L()->brightctl_lbl, 380, 570, cfg->brightness_ctl);
-        add_label(p, L()->bright_lbl, 380, 622);
-        s_slider_bright = lv_slider_create(p);
-        lv_obj_set_size(s_slider_bright, UISX(280), UISY(16));
-        lv_obj_set_pos(s_slider_bright, UISX(460), UISY(634));
-        lv_slider_set_range(s_slider_bright, 5, 100);
-        lv_slider_set_value(s_slider_bright, cfg->brightness, LV_ANIM_OFF);
-        lv_obj_add_event_cb(s_slider_bright, brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        s_sw_brightctl = add_switch(p, L()->brightctl_lbl, 0, 420, cfg->brightness_ctl);
+        add_label(p, L()->bright_day_lbl, 0, 478);
+        s_slider_day = lv_slider_create(p);
+        lv_obj_set_size(s_slider_day, UISX(280), UISY(16));
+        lv_obj_set_pos(s_slider_day, UISX(300), UISY(490));
+        lv_slider_set_range(s_slider_day, 5, 100);
+        lv_slider_set_value(s_slider_day, cfg->bright_day, LV_ANIM_OFF);
+        lv_obj_add_event_cb(s_slider_day, brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+        add_label(p, L()->bright_night_lbl, 0, 534);
+        s_slider_night = lv_slider_create(p);
+        lv_obj_set_size(s_slider_night, UISX(280), UISY(16));
+        lv_obj_set_pos(s_slider_night, UISX(300), UISY(546));
+        lv_slider_set_range(s_slider_night, 5, 100);
+        lv_slider_set_value(s_slider_night, cfg->bright_night, LV_ANIM_OFF);
+        lv_obj_add_event_cb(s_slider_night, brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
 #endif
 

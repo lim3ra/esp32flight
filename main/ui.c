@@ -141,7 +141,6 @@ static map_target_t s_all[MAX_AIRCRAFT];
 static int s_all_count;
 
 static char s_weather_txt[96];
-static bool s_bl_off;
 
 /* Re-assert the configured brightness after a full-on: bl_on() drives the
  * panel to maximum on every board. No-op at 100%% or on on/off-only
@@ -1336,106 +1335,54 @@ static void fb_upscale(uint16_t *fb, int W, int H, int px, int py, float k)
 
 
 /* idle watcher: screensaver + night backlight */
-/* Which brightness slot covers local time now, or -1 for none. A range may
- * wrap midnight (22:00-07:00), and the first match wins so overlapping slots
- * resolve predictably instead of fighting each other. */
-static int bsched_slot_now(void)
+/* Inside the night window? -1 while the clock is still unset, so boot does
+ * not briefly pick the wrong level. The window may wrap midnight, which the
+ * 22:00-07:00 default does. */
+static int night_now(void)
 {
     const settings_t *cfg = settings_get();
-    if (!cfg->bsched_on) {
-        return -1;
-    }
     time_t now = time(NULL);
     if (now < 1600000000) {
-        return -1;              /* clock not set yet: leave brightness alone */
+        return -1;
     }
     time_t l = now + (tz_home_known() ? tz_home_offset() : 0);
     struct tm tm;
     gmtime_r(&l, &tm);
     int m = tm.tm_hour * 60 + tm.tm_min;
-    for (int s = 0; s < 2; s++) {
-        int a = cfg->bsched_from[s], b = cfg->bsched_to[s];
-        if (a == b) {
-            continue;           /* empty range */
-        }
-        if (a < b ? (m >= a && m < b) : (m >= a || m < b)) {
-            return s;
-        }
+    int a = cfg->night_start_min, b = cfg->night_end_min;
+    if (a == b) {
+        return 0;               /* empty window: always day */
     }
-    return -1;
+    return (a < b ? (m >= a && m < b) : (m >= a || m < b)) ? 1 : 0;
 }
 
-/* Night blackout used to wait for the screensaver to be up. With no
- * screensaver, plain inactivity is the trigger; this timer runs every 10 s,
- * so a touch relights the panel within one tick via the safety net below. */
-#define NIGHT_IDLE_MS  60000U
-
-/* idle watcher: night backlight + scheduled brightness */
+/* idle watcher: day/night brightness */
 static void idle_timer_cb(lv_timer_t *t)
 {
-    const settings_t *cfg = settings_get();
-    uint32_t idle_ms = lv_disp_get_inactive_time(NULL);
+    (void)t;
+    settings_t *cfg = settings_get();
 
-    /* Scheduled brightness, applied when a slot is entered rather than on
-     * every tick: a change from the slider or Home Assistant then holds
-     * until the next boundary instead of being overwritten 10 s later. The
-     * level is stored either way, but the panel is only re-lit if it is
-     * already on - the schedule sets how bright, never whether. */
+    /* Applied when the window is crossed rather than on every tick, so a
+     * change from the slider or from Home Assistant holds until the next
+     * boundary instead of being overwritten ten seconds later. */
     {
-        static int applied_slot = -2;
-        int slot = bsched_slot_now();
-        if (slot != applied_slot) {
-            applied_slot = slot;
-            if (slot >= 0) {
-                settings_t *w = settings_get();
-                if (w->brightness != w->bsched_pct[slot]) {
-                    w->brightness = w->bsched_pct[slot];
-                    ESP_LOGI(TAG, "brightness schedule: slot %d -> %d%%",
-                             slot, w->brightness);
-                }
-                if (!s_bl_off) {
-                    ui_apply_brightness();
-                }
-            }
-        }
-    }
-
-    if (cfg->night_enabled) {
-        time_t now = time(NULL);
-        if (now > 1600000000) {
-            time_t l = now + (tz_home_known() ? tz_home_offset() : 0);
-            struct tm tm;
-            gmtime_r(&l, &tm);
-            int m = tm.tm_hour * 60 + tm.tm_min;
-            int a = cfg->night_start_min, b = cfg->night_end_min;
-            if (cfg->night_auto && s_home_ok) {
-                int rise, set;
-                if (geo_sun_times(s_home_lat, s_home_lon, (long long)now,
-                                  tz_home_known() ? tz_home_offset() : 0,
-                                  &rise, &set)) {
-                    a = set;    /* dark from sunset... */
-                    b = rise;   /* ...to sunrise */
-                }
-            }
-            bool night = a <= b ? (m >= a && m < b) : (m >= a || m < b);
-            if (night && !s_bl_off && idle_ms > NIGHT_IDLE_MS) {
-                waveshare_rgb_lcd_bl_off();
-                s_bl_off = true;
-            } else if (!night && s_bl_off) {
-                waveshare_rgb_lcd_bl_on();
+        static int applied = -2;
+        int night = cfg->brightness_ctl ? night_now() : -1;
+        if (night >= 0 && night != applied) {
+            applied = night;
+            uint8_t want = night ? cfg->bright_night : cfg->bright_day;
+            if (cfg->brightness != want) {
+                cfg->brightness = want;
+                ESP_LOGI(TAG, "%s brightness -> %d%%",
+                         night ? "night" : "day", want);
                 ui_apply_brightness();
-                s_bl_off = false;
+                mqtt_pub_backlight_changed();
             }
+        } else if (night < 0) {
+            applied = -2;       /* re-evaluate once the clock is set */
         }
     }
 
-    /* Any recent input while dark relights the panel (this timer runs every
-     * 10 s), and so does disabling night mode from the web panel. */
-    if (s_bl_off && (idle_ms < 11000U || !cfg->night_enabled)) {
-        waveshare_rgb_lcd_bl_on();
-        ui_apply_brightness();
-        s_bl_off = false;
-    }
 }
 
 
@@ -1818,11 +1765,10 @@ bool ui_input_action(const char *a)
         return true;
     }
     if (strcmp(a, "wake") == 0) {
-        if (s_bl_off) {
-            waveshare_rgb_lcd_bl_on();
-            ui_apply_brightness();
-            s_bl_off = false;
-        }
+        /* nothing switches the panel off now; re-assert the level in case
+         * something else drove the backlight */
+        waveshare_rgb_lcd_bl_on();
+        ui_apply_brightness();
         return true;
     }
     return false;

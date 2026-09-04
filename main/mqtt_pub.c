@@ -81,6 +81,21 @@ static void publish_discovery(void)
 #else
         "Android";
 #endif
+
+    /* Discovery configs are retained, so an entity outlives the firmware
+     * that announced it: dropping the publish code leaves it on the broker
+     * and in Home Assistant forever. An empty retained payload is how MQTT
+     * discovery deletes one. These two were the 7B edition's own additions
+     * (next-panel button, screensaver switch) and went away with the views
+     * they drove; the sweep is cheap and idempotent, so it just runs on
+     * every connect rather than carrying a "have I cleaned up yet" flag. */
+    static const char *k_retired[] = {
+        "homeassistant/button/esp32flight_next_view/config",
+        "homeassistant/switch/esp32flight_screensaver/config",
+    };
+    for (size_t i = 0; i < sizeof(k_retired) / sizeof(k_retired[0]); i++) {
+        esp_mqtt_client_publish(s_client, k_retired[i], "", 0, 1, 1);
+    }
     for (size_t i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
         char topic[96], payload[512];
         snprintf(topic, sizeof(topic),

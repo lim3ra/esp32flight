@@ -50,9 +50,10 @@ void settings_load(void)
     s_settings.theme = 0;
     s_settings.lang = 0;   /* English out of the box; 1 = Polish */
     s_settings.ota_enabled = false;   /* never persisted, armed per session */
-    s_settings.night_enabled = false;
-    s_settings.night_start_min = 23 * 60;
-    s_settings.night_end_min = 6 * 60 + 30;
+    s_settings.night_start_min = 22 * 60;
+    s_settings.night_end_min = 7 * 60;
+    s_settings.bright_day = 100;
+    s_settings.bright_night = 5;
     s_settings.filter_airport[0] = '\0';
     s_settings.filter_apt_exclude = false;
     s_settings.alt_min_ft = 0;
@@ -61,17 +62,9 @@ void settings_load(void)
     s_settings.openaip_key[0] = '\0';
     s_settings.carto_key[0] = '\0';
     s_settings.tile_url[0] = '\0';
-    s_settings.bsched_on = false;
-    s_settings.bsched_from[0] = 22 * 60;
-    s_settings.bsched_to[0]   = 7 * 60;
-    s_settings.bsched_pct[0]  = 5;
-    s_settings.bsched_from[1] = 7 * 60;
-    s_settings.bsched_to[1]   = 22 * 60;
-    s_settings.bsched_pct[1]  = 100;
     s_settings.metric_units = false;
     s_settings.metar_decoded = false;
     s_settings.follow_mode = false;
-    s_settings.night_auto = false;
     memset(s_settings.fav_name, 0, sizeof(s_settings.fav_name));
 
     nvs_handle_t h;
@@ -163,9 +156,6 @@ void settings_load(void)
     if (nvs_get_u8(h, "fltexcl", &b8) == ESP_OK) {
         s_settings.filter_apt_exclude = b8 != 0;
     }
-    if (nvs_get_u8(h, "night", &b8) == ESP_OK) {
-        s_settings.night_enabled = b8 != 0;
-    }
     int32_t m = 0;
     if (nvs_get_i32(h, "night_s", &m) == ESP_OK && m >= 0 && m < 1440) {
         s_settings.night_start_min = m;
@@ -180,24 +170,11 @@ void settings_load(void)
     }
     get_str(h, "oaipkey", s_settings.openaip_key, sizeof(s_settings.openaip_key));
     get_str(h, "cartokey", s_settings.carto_key, sizeof(s_settings.carto_key));
-    if (nvs_get_u8(h, "bschon", &b8) == ESP_OK) {
-        s_settings.bsched_on = b8 != 0;
+    if (nvs_get_u8(h, "brday", &b8) == ESP_OK && b8 >= 5 && b8 <= 100) {
+        s_settings.bright_day = b8;
     }
-    for (int s = 0; s < 2; s++) {
-        char k[12];
-        int32_t v32 = 0;
-        snprintf(k, sizeof(k), "bsf%d", s);
-        if (nvs_get_i32(h, k, &v32) == ESP_OK && v32 >= 0 && v32 < 1440) {
-            s_settings.bsched_from[s] = (int16_t)v32;
-        }
-        snprintf(k, sizeof(k), "bst%d", s);
-        if (nvs_get_i32(h, k, &v32) == ESP_OK && v32 >= 0 && v32 < 1440) {
-            s_settings.bsched_to[s] = (int16_t)v32;
-        }
-        snprintf(k, sizeof(k), "bsp%d", s);
-        if (nvs_get_u8(h, k, &b8) == ESP_OK && b8 >= 1 && b8 <= 100) {
-            s_settings.bsched_pct[s] = b8;
-        }
+    if (nvs_get_u8(h, "brnight", &b8) == ESP_OK && b8 >= 5 && b8 <= 100) {
+        s_settings.bright_night = b8;
     }
     get_str(h, "tileurl", s_settings.tile_url, sizeof(s_settings.tile_url));
     if (nvs_get_u8(h, "metric", &b8) == ESP_OK) {
@@ -208,9 +185,6 @@ void settings_load(void)
     }
     if (nvs_get_u8(h, "follow", &b8) == ESP_OK) {
         s_settings.follow_mode = b8 != 0;
-    }
-    if (nvs_get_u8(h, "nauto", &b8) == ESP_OK) {
-        s_settings.night_auto = b8 != 0;
     }
     for (int f = 0; f < 3; f++) {
         char key[12], val[64] = "";
@@ -273,27 +247,17 @@ esp_err_t settings_save(void)
     nvs_set_i32(h, "altmin", s_settings.alt_min_ft);
     nvs_set_i32(h, "altmax", s_settings.alt_max_ft);
     nvs_set_u8(h, "fltexcl", s_settings.filter_apt_exclude ? 1 : 0);
-    nvs_set_u8(h, "night", s_settings.night_enabled ? 1 : 0);
     nvs_set_i32(h, "night_s", s_settings.night_start_min);
     nvs_set_i32(h, "night_e", s_settings.night_end_min);
     nvs_set_u8(h, "airsp", s_settings.airspace_enabled ? 1 : 0);
     nvs_set_str(h, "oaipkey", s_settings.openaip_key);
     nvs_set_str(h, "cartokey", s_settings.carto_key);
-    nvs_set_u8(h, "bschon", s_settings.bsched_on ? 1 : 0);
-    for (int s = 0; s < 2; s++) {
-        char k[12];
-        snprintf(k, sizeof(k), "bsf%d", s);
-        nvs_set_i32(h, k, s_settings.bsched_from[s]);
-        snprintf(k, sizeof(k), "bst%d", s);
-        nvs_set_i32(h, k, s_settings.bsched_to[s]);
-        snprintf(k, sizeof(k), "bsp%d", s);
-        nvs_set_u8(h, k, s_settings.bsched_pct[s]);
-    }
+    nvs_set_u8(h, "brday", s_settings.bright_day);
+    nvs_set_u8(h, "brnight", s_settings.bright_night);
     nvs_set_str(h, "tileurl", s_settings.tile_url);
     nvs_set_u8(h, "metric", s_settings.metric_units ? 1 : 0);
     nvs_set_u8(h, "mdec", s_settings.metar_decoded ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);
-    nvs_set_u8(h, "nauto", s_settings.night_auto ? 1 : 0);
     for (int f = 0; f < 3; f++) {
         char key[12], val[64];
         snprintf(key, sizeof(key), "fav%d", f);
