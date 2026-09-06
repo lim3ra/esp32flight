@@ -478,7 +478,7 @@ static const char INDEX_HTML[] =
 "c.bright_night=Math.min(100,Math.max(5,+document.getElementById('c_bright_night').value||5));"
 "c.input_map=inSerialize();"
 "c.local_adsb_use=document.getElementById('c_local_adsb_use').value==='1';"
-"['taf','iss','sonde','ships','airspace'].forEach(k=>c[k+'_enabled']=document.getElementById('c_'+k+'_enabled').value==='1');"
+"c.airspace_enabled=document.getElementById('c_airspace_enabled').value==='1';"
 "['metric_units','follow_mode','temp_f'].forEach(k=>c[k]=document.getElementById('c_'+k).value==='1');"
 "c.favs=favs.map(f=>f&&f.name?f:{name:'',lat:0,lon:0});"
 "const num=v=>parseFloat(String(v).replace(',','.'));"
