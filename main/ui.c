@@ -178,6 +178,16 @@ static lv_obj_t *s_card_flag, *s_card_reg, *s_card_type;
 static lv_obj_t *s_card_from, *s_card_to, *s_card_airline;
 static lv_obj_t *s_card_vals[6];
 
+/* Overhead ticker: the aircraft that is passing, or is about to pass,
+ * near-vertically above home. "Overhead" is an elevation angle rather than a
+ * ground distance, so it means the same thing for an airliner at 11 km and a
+ * helicopter at 300 m - 2 km out is directly overhead for one and low on the
+ * horizon for the other. */
+#define TICKER_ELEV_DEG   70.0   /* >= this above the horizon counts */
+#define TICKER_WINDOW_S   120    /* how far ahead to announce */
+static lv_obj_t *s_tick_bar, *s_tick_chip, *s_tick_logo, *s_tick_txt;
+static char      s_tick_hex[ICAO_HEX_LEN];
+
 /* breadcrumb trail of the selected aircraft, map mode only */
 static lv_obj_t   *s_radar_trail;
 static lv_point_t  s_radar_trail_pts[TRAIL_LEN];
@@ -220,6 +230,7 @@ static void render_list_selection(void);
 static void fb_upscale(uint16_t *fb, int W, int H, int px, int py, float k);
 static void render_radar_panel(void);
 static void card_render(void);
+static void ticker_update(void);
 static void card_open_cb(lv_event_t *e);
 static void label_set_if_changed(lv_obj_t *l, const char *txt);
 
@@ -880,6 +891,98 @@ static void card_render(void)
     label_set_if_changed(s_card_vals[5], ac->squawk[0] ? ac->squawk : "-");
 }
 
+/* Pick what the bar should say, or hide it. Two ways in: something is
+ * overhead right now, which wins, or geo_cpa() says one will be inside the
+ * window. geo_cpa() only answers for aircraft still approaching - it returns
+ * false once they are past the closest point - so the "now" test is what
+ * keeps the bar up while the aircraft is actually above. */
+static void ticker_update(void)
+{
+    if (s_tick_bar == NULL) {
+        return;
+    }
+    const shown_flight_t *best = NULL;
+    double best_score = 1e9;      /* smaller is better; predicted ones sort behind */
+    int    best_eta = -1;
+
+    for (int i = 0; i < s_shown_count; i++) {
+        const aircraft_t *ac = &s_shown[i].ac;
+        if (!ac->has_pos || ac->on_ground || ac->dist_nm < 0) {
+            continue;
+        }
+        double now_km = ac->dist_nm * 1.852;
+        if (geo_elevation_deg(now_km, ac->alt_baro_ft) >= TICKER_ELEV_DEG) {
+            if (now_km < best_score) {
+                best_score = now_km;
+                best = &s_shown[i];
+                best_eta = 0;
+            }
+            continue;
+        }
+        double t_s, cpa_km;
+        if (!geo_cpa(s_home_lat, s_home_lon, ac->lat, ac->lon,
+                     ac->track_deg, ac->gs_kts, &t_s, &cpa_km)) {
+            continue;
+        }
+        if (t_s > TICKER_WINDOW_S ||
+            geo_elevation_deg(cpa_km, ac->alt_baro_ft) < TICKER_ELEV_DEG) {
+            continue;
+        }
+        double score = 1000.0 + cpa_km;
+        if (score < best_score) {
+            best_score = score;
+            best = &s_shown[i];
+            best_eta = (int)t_s;
+        }
+    }
+
+    if (best == NULL) {
+        lv_obj_add_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
+        s_tick_hex[0] = '\0';
+        return;
+    }
+
+    const aircraft_t *ac = &best->ac;
+    const route_info_t *rt = best->route.callsign[0] && best->route.valid
+                                 ? &best->route : NULL;
+    char when[24];
+    if (best_eta <= 0) {
+        strlcpy(when, L()->overhead_now, sizeof(when));
+    } else if (best_eta < 90) {
+        snprintf(when, sizeof(when), L()->overhead_in_s, best_eta);
+    } else {
+        snprintf(when, sizeof(when), L()->overhead_in_min, (best_eta + 30) / 60);
+    }
+
+    char route[48] = "";
+    if (rt != NULL) {
+        snprintf(route, sizeof(route), "%s " LV_SYMBOL_RIGHT " %s  \xC2\xB7  ",
+                 rt->origin.iata[0] ? rt->origin.iata : rt->origin.icao,
+                 rt->destination.iata[0] ? rt->destination.iata : rt->destination.icao);
+    }
+    char ua[20], txt[192];
+    snprintf(txt, sizeof(txt), "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %s",
+             ac->callsign[0] ? ac->callsign : ac->hex,
+             ac->type_icao[0] ? ac->type_icao : "?",
+             route, units_alt(ac->alt_baro_ft, ua, sizeof(ua)), when);
+    label_set_if_changed(s_tick_txt, txt);
+
+    const char *lcode = airline_code(ac, &best->route);
+    const lv_img_dsc_t *ldsc = lcode ? logos_get(lcode) : NULL;
+    if (ldsc != NULL) {
+        img_src_if_changed(s_tick_logo, ldsc);
+        lv_obj_clear_flag(s_tick_logo, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_tick_logo, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (strcmp(s_tick_hex, ac->hex) != 0) {
+        strlcpy(s_tick_hex, ac->hex, sizeof(s_tick_hex));
+        lv_obj_move_foreground(s_tick_bar);
+    }
+    lv_obj_clear_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void card_open_cb(lv_event_t *e)
 {
     (void)e;
@@ -889,6 +992,47 @@ static void card_open_cb(lv_event_t *e)
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_card);
     card_render();
+}
+
+static void build_ticker(lv_obj_t *parent)
+{
+    s_tick_bar = lv_obj_create(parent);
+    lv_obj_set_size(s_tick_bar, RADAR_W, UISY(44));
+    lv_obj_set_pos(s_tick_bar, 0, 0);
+    lv_obj_set_style_bg_color(s_tick_bar, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_tick_bar, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(s_tick_bar, 0, 0);
+    lv_obj_set_style_radius(s_tick_bar, 0, 0);
+    lv_obj_set_style_pad_all(s_tick_bar, 0, 0);
+    lv_obj_set_style_pad_column(s_tick_bar, UISX(10), 0);
+    lv_obj_set_flex_flow(s_tick_bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_tick_bar, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(s_tick_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
+
+    /* the red "breaking" chip */
+    s_tick_chip = lv_obj_create(s_tick_bar);
+    lv_obj_set_size(s_tick_chip, LV_SIZE_CONTENT, UISY(30));
+    lv_obj_set_style_bg_color(s_tick_chip, lv_color_hex(0xd7263d), 0);
+    lv_obj_set_style_border_width(s_tick_chip, 0, 0);
+    lv_obj_set_style_radius(s_tick_chip, UISY(4), 0);
+    lv_obj_set_style_pad_hor(s_tick_chip, UISX(10), 0);
+    lv_obj_set_style_pad_ver(s_tick_chip, 0, 0);
+    lv_obj_clear_flag(s_tick_chip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *cl = make_label(s_tick_chip, UIFONT(&font_pl_14, &font_pl_8),
+                              lv_color_white());
+    lv_label_set_text(cl, L()->overhead_lbl);
+    lv_obj_center(cl);
+
+    s_tick_logo = lv_img_create(s_tick_bar);
+    lv_img_set_pivot(s_tick_logo, 0, 0);
+    lv_img_set_zoom(s_tick_logo, 256 * UISY(26) / 90);
+    lv_img_set_size_mode(s_tick_logo, LV_IMG_SIZE_MODE_REAL);
+    lv_obj_add_flag(s_tick_logo, LV_OBJ_FLAG_HIDDEN);
+
+    s_tick_txt = make_label(s_tick_bar, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_label_set_text(s_tick_txt, "");
 }
 
 static void build_radar_panel(lv_obj_t *scr)
@@ -993,6 +1137,7 @@ static void build_radar_panel(lv_obj_t *scr)
     lv_label_set_text(s_radar_range, "");
 
     build_card(s_radar_panel);
+    build_ticker(s_radar_panel);
 }
 
 /* ---------- optional extra objects: ISS, radiosondes, AIS ships ---------- */
@@ -1273,6 +1418,7 @@ static void render_radar_panel(void)
     }
     render_airspaces(map_mode);
     card_render();
+    ticker_update();
 }
 
 /* ---------- full-screen ambient screensaver ---------- */

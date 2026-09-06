@@ -57,6 +57,7 @@ typedef struct {
     const char *route_lbl;
     const char *bright_lbl, *clk12_lbl, *brightctl_lbl;
     const char *bright_day_lbl, *bright_night_lbl;
+    const char *overhead_lbl, *overhead_now, *overhead_in_s, *overhead_in_min;
     const char *sec_notify, *sec_datasrc, *sec_smart;
     const char *lm_planes, *lm_ships, *lm_all;   /* list content toggle */
     const char *ship_dest, *ship_pos;            /* ship detail tiles */
