@@ -185,6 +185,8 @@ static lv_obj_t *s_card_vals[6];
  * horizon for the other. */
 #define TICKER_ELEV_DEG   70.0   /* >= this above the horizon counts */
 #define TICKER_WINDOW_S   120    /* how far ahead to announce */
+#define TICKER_MAX        4      /* queue depth when several qualify at once */
+#define TICKER_ROTATE_MS  4000   /* dwell per entry while rotating */
 static lv_obj_t *s_tick_bar, *s_tick_chip, *s_tick_logo, *s_tick_txt;
 static char      s_tick_hex[ICAO_HEX_LEN];
 
@@ -230,7 +232,7 @@ static void render_list_selection(void);
 static void fb_upscale(uint16_t *fb, int W, int H, int px, int py, float k);
 static void render_radar_panel(void);
 static void card_render(void);
-static void ticker_update(void);
+static void ticker_update(bool advance);
 static void card_open_cb(lv_event_t *e);
 static void label_set_if_changed(lv_obj_t *l, const char *txt);
 
@@ -891,56 +893,89 @@ static void card_render(void)
     label_set_if_changed(s_card_vals[5], ac->squawk[0] ? ac->squawk : "-");
 }
 
-/* Pick what the bar should say, or hide it. Two ways in: something is
- * overhead right now, which wins, or geo_cpa() says one will be inside the
- * window. geo_cpa() only answers for aircraft still approaching - it returns
- * false once they are past the closest point - so the "now" test is what
- * keeps the bar up while the aircraft is actually above. */
-static void ticker_update(void)
+/* Pick what the bar should say, or hide it.
+ *
+ * Two ways to qualify. geo_cpa() predicts the closest approach, covering the
+ * announcement up to TICKER_WINDOW_S ahead - but it returns false once an
+ * aircraft is past that point, so on its own the bar would go dark exactly
+ * when the aircraft is actually overhead. A straight "is it above me right
+ * now" test covers that half.
+ *
+ * Ranking is by elevation, not by ground distance, because the threshold is
+ * an elevation too. Those disagree in a case worth getting right: a
+ * helicopter at 300 m and 100 m away is 72 degrees up, an airliner at 11 km
+ * and 1 km away is 85 - the airliner is more nearly overhead even though the
+ * helicopter is nearer along the ground.
+ *
+ * More than one can qualify at once, so they queue and the bar rotates
+ * through them, newsreel-style, with a position counter. */
+static void ticker_update(bool advance)
 {
     if (s_tick_bar == NULL) {
         return;
     }
-    const shown_flight_t *best = NULL;
-    double best_score = 1e9;      /* smaller is better; predicted ones sort behind */
-    int    best_eta = -1;
+    struct { const shown_flight_t *sf; int eta; double elev; } cand[TICKER_MAX];
+    int n = 0;
 
     for (int i = 0; i < s_shown_count; i++) {
         const aircraft_t *ac = &s_shown[i].ac;
         if (!ac->has_pos || ac->on_ground || ac->dist_nm < 0) {
             continue;
         }
-        double now_km = ac->dist_nm * 1.852;
-        if (geo_elevation_deg(now_km, ac->alt_baro_ft) >= TICKER_ELEV_DEG) {
-            if (now_km < best_score) {
-                best_score = now_km;
-                best = &s_shown[i];
-                best_eta = 0;
+        int    eta;
+        double elev = geo_elevation_deg(ac->dist_nm * 1.852, ac->alt_baro_ft);
+        if (elev >= TICKER_ELEV_DEG) {
+            eta = 0;                    /* above me right now */
+        } else {
+            double t_s, cpa_km;
+            if (!geo_cpa(s_home_lat, s_home_lon, ac->lat, ac->lon,
+                         ac->track_deg, ac->gs_kts, &t_s, &cpa_km)) {
+                continue;
             }
-            continue;
+            elev = geo_elevation_deg(cpa_km, ac->alt_baro_ft);
+            if (t_s > TICKER_WINDOW_S || elev < TICKER_ELEV_DEG) {
+                continue;
+            }
+            eta = (int)t_s;
         }
-        double t_s, cpa_km;
-        if (!geo_cpa(s_home_lat, s_home_lon, ac->lat, ac->lon,
-                     ac->track_deg, ac->gs_kts, &t_s, &cpa_km)) {
-            continue;
+        /* insertion sort: overhead now ahead of predicted, then steepest
+           first, so the queue reads in the order you would look up */
+        int pos = n;
+        while (pos > 0) {
+            bool prev_now = cand[pos - 1].eta == 0, this_now = eta == 0;
+            if (prev_now != this_now ? this_now
+                                     : elev > cand[pos - 1].elev) {
+                if (pos < TICKER_MAX) {
+                    cand[pos] = cand[pos - 1];
+                }
+                pos--;
+            } else {
+                break;
+            }
         }
-        if (t_s > TICKER_WINDOW_S ||
-            geo_elevation_deg(cpa_km, ac->alt_baro_ft) < TICKER_ELEV_DEG) {
-            continue;
-        }
-        double score = 1000.0 + cpa_km;
-        if (score < best_score) {
-            best_score = score;
-            best = &s_shown[i];
-            best_eta = (int)t_s;
+        if (pos < TICKER_MAX) {
+            cand[pos].sf = &s_shown[i];
+            cand[pos].eta = eta;
+            cand[pos].elev = elev;
+            if (n < TICKER_MAX) {
+                n++;
+            }
         }
     }
 
-    if (best == NULL) {
+    if (n == 0) {
         lv_obj_add_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
         s_tick_hex[0] = '\0';
         return;
     }
+
+    static int rot;
+    if (advance) {
+        rot++;
+    }
+    int idx = rot % n;
+    const shown_flight_t *best = cand[idx].sf;
+    int best_eta = cand[idx].eta;
 
     const aircraft_t *ac = &best->ac;
     const route_info_t *rt = best->route.callsign[0] && best->route.valid
@@ -960,11 +995,16 @@ static void ticker_update(void)
                  rt->origin.iata[0] ? rt->origin.iata : rt->origin.icao,
                  rt->destination.iata[0] ? rt->destination.iata : rt->destination.icao);
     }
-    char ua[20], txt[192];
-    snprintf(txt, sizeof(txt), "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %s",
+    char more[32] = "";
+    if (n > 1) {
+        snprintf(more, sizeof(more), "  \xC2\xB7  %d/%d", idx + 1, n);
+    }
+    char ua[20], txt[288];
+    snprintf(txt, sizeof(txt), "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %d\xC2\xB0  \xC2\xB7  %s%s",
              ac->callsign[0] ? ac->callsign : ac->hex,
              ac->type_icao[0] ? ac->type_icao : "?",
-             route, units_alt(ac->alt_baro_ft, ua, sizeof(ua)), when);
+             route, units_alt(ac->alt_baro_ft, ua, sizeof(ua)),
+             (int)(cand[idx].elev + 0.5), when, more);
     label_set_if_changed(s_tick_txt, txt);
 
     const char *lcode = airline_code(ac, &best->route);
@@ -981,6 +1021,12 @@ static void ticker_update(void)
         lv_obj_move_foreground(s_tick_bar);
     }
     lv_obj_clear_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void ticker_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    ticker_update(true);
 }
 
 static void card_open_cb(lv_event_t *e)
@@ -1004,6 +1050,10 @@ static void build_ticker(lv_obj_t *parent)
     lv_obj_set_style_border_width(s_tick_bar, 0, 0);
     lv_obj_set_style_radius(s_tick_bar, 0, 0);
     lv_obj_set_style_pad_all(s_tick_bar, 0, 0);
+    /* The bar spans the panel, but its content starts clear of the left
+     * edge: the aircraft list's scrollbar sits right on that boundary and
+     * the chip was touching it. */
+    lv_obj_set_style_pad_left(s_tick_bar, UISX(14), 0);
     lv_obj_set_style_pad_column(s_tick_bar, UISX(10), 0);
     lv_obj_set_flex_flow(s_tick_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_tick_bar, LV_FLEX_ALIGN_START,
@@ -1418,7 +1468,7 @@ static void render_radar_panel(void)
     }
     render_airspaces(map_mode);
     card_render();
-    ticker_update();
+    ticker_update(false);   /* refresh in place; the timer does the rotating */
 }
 
 /* ---------- full-screen ambient screensaver ---------- */
@@ -1575,6 +1625,7 @@ void ui_init(void)
     lv_timer_create(clock_timer_cb, 5000, NULL);
     lv_timer_create(logo_tick_cb, 500, NULL);
     lv_timer_create(idle_timer_cb, 10000, NULL);
+    lv_timer_create(ticker_timer_cb, TICKER_ROTATE_MS, NULL);
 
     apply_view(VIEW_RADAR);
 }
