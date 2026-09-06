@@ -55,3 +55,19 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_SPIFFS_OBJ_NAME_LEN=48
 
 CONFIG_LV_MEM_CUSTOM_INCLUDE="esp_heap_caps.h"
+
+# The device runs out of socket descriptors at the stock 10. Proven from the
+# board's own log: "httpd_server: error accepting new connection" alongside
+# "esp-tls: Failed to create socket", 14 times in one session - the panel
+# stops answering while MQTT, which already holds its socket, keeps
+# publishing, which is exactly how the failure looks from outside.
+#
+# The pool is shared: 4 for the web panel, 1 for MQTT, and the rest for the
+# app's own outbound TLS - tiles, logos, routes, airspace, per-airport
+# timezone lookups, weather. That last group bursts.
+#
+# 16 was tried once before and reverted: it cost ~3.5 KB of internal RAM,
+# which back then took the minimum free down to 716 B. Since the screensaver,
+# world map and detail panel came out, the internal minimum sits at 30-40 KB,
+# so the same 3.5 KB is now affordable.
+CONFIG_LWIP_MAX_SOCKETS=16
