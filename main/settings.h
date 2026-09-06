@@ -49,7 +49,6 @@ typedef struct {
     char    carto_key[48];    /* CARTO basemaps key; empty = OSM tiles + on-device dark style */
     char    tile_url[112];    /* custom tile URL template with {z}/{x}/{y}; overrides both */
     bool    metric_units;     /* m + km/h instead of ft + kt */
-    bool    metar_decoded;    /* human-readable METAR instead of raw */
     bool    follow_mode;      /* stick to the selected aircraft, no auto-cycle */
     char    fav_name[3][24];  /* favorite locations, empty name = free slot */
     double  fav_lat[3], fav_lon[3];

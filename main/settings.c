@@ -63,7 +63,6 @@ void settings_load(void)
     s_settings.carto_key[0] = '\0';
     s_settings.tile_url[0] = '\0';
     s_settings.metric_units = false;
-    s_settings.metar_decoded = false;
     s_settings.follow_mode = false;
     memset(s_settings.fav_name, 0, sizeof(s_settings.fav_name));
 
@@ -183,9 +182,6 @@ void settings_load(void)
     if (nvs_get_u8(h, "metric", &b8) == ESP_OK) {
         s_settings.metric_units = b8 != 0;
     }
-    if (nvs_get_u8(h, "mdec", &b8) == ESP_OK) {
-        s_settings.metar_decoded = b8 != 0;
-    }
     if (nvs_get_u8(h, "follow", &b8) == ESP_OK) {
         s_settings.follow_mode = b8 != 0;
     }
@@ -260,7 +256,6 @@ esp_err_t settings_save(void)
     nvs_set_u8(h, "brnight", s_settings.bright_night);
     nvs_set_str(h, "tileurl", s_settings.tile_url);
     nvs_set_u8(h, "metric", s_settings.metric_units ? 1 : 0);
-    nvs_set_u8(h, "mdec", s_settings.metar_decoded ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);
     for (int f = 0; f < 3; f++) {
         char key[12], val[64];

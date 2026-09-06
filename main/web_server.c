@@ -205,7 +205,6 @@ static const char INDEX_HTML[] =
 "<div><label>Language</label><select id='c_lang'><option value='0'>English</option><option value='1'>Polski</option></select></div>"
 "<div><label>Units</label><select id='c_metric_units'><option value='0'>aviation (ft, kt)</option><option value='1'>metric (m, km/h)</option></select></div>"
 "<div><label>Temperature</label><select id='c_temp_f'><option value='0'>\u00b0C</option><option value='1'>\u00b0F</option></select></div>"
-"<div><label>METAR style</label><select id='c_metar_decoded'><option value='0'>raw</option><option value='1'>decoded</option></select></div>"
 "<div><label>Auto-cycle flights</label><select id='c_follow_mode'><option value='0'>on (default)</option><option value='1'>off, follow selection</option></select>"
 "<div class='help'>Off keeps the selected flight on screen until you pick another one.</div></div>"
 
@@ -249,7 +248,7 @@ static const char INDEX_HTML[] =
 "<p class='dim'>Base URL: <code>http://esp32flight.local</code> (or the device IP). When a panel password is set, every endpoint requires HTTP Basic Auth with user <code>admin</code>: <code>curl -u admin:PASSWORD ...</code></p>"
 "<dl>"
 "<dt>GET /api/state</dt>"
-"<dd>Live state JSON, refreshed with every poll cycle (about 8 s). Fields: <code>flights[]</code> with hex, callsign, reg, cc (country), type, airline, flight_iata, lat, lon, alt_ft, gs_kt, track, dist_km, squawk, interesting, trail (list of [lat,lon]) and route {from, to, from_lat, from_lon, to_lat, to_lon, progress}; plus <code>weather</code>, <code>net</code> (ssid, rssi, ip, mdns), <code>stats</code> (unique_aircraft, max_alt_ft, hours[], top_airlines[], days[], metar, version) and the live <code>ota_enabled</code> flag."
+"<dd>Live state JSON, refreshed with every poll cycle (about 8 s). Fields: <code>flights[]</code> with hex, callsign, reg, cc (country), type, airline, flight_iata, lat, lon, alt_ft, gs_kt, track, dist_km, squawk, interesting, trail (list of [lat,lon]) and route {from, to, from_lat, from_lon, to_lat, to_lon, progress}; plus <code>weather</code>, <code>net</code> (ssid, rssi, ip, mdns), <code>stats</code> (unique_aircraft, max_alt_ft, max_gs_kt, max_dist_km, max_dist_callsign, uptime_min, hours[], top_airlines[], version, board) and the live <code>ota_enabled</code> flag."
 "<pre>curl http://esp32flight.local/api/state | jq '.flights[0]'</pre></dd>"
 "<dt>GET /api/config</dt>"
 "<dd>Current settings as JSON. Passwords are never returned; <code>web_pass_set</code> only tells whether one is active.</dd>"
@@ -328,26 +327,20 @@ static const char INDEX_HTML[] =
 "m.on('popupclose',()=>{if(!redraw&&selHex===f.hex){clearRoute();hiRow(null);}});"
 "m.bindTooltip(f.callsign,{permanent:false}).bindPopup(t);});"
 "redraw=false;"
-"if(d.iss)L.circleMarker([d.iss.lat,d.iss.lon],{radius:8,color:'#9be8ff',weight:2,fillOpacity:.5})"
-".addTo(layer).bindPopup(`<b>ISS</b><br>${d.iss.alt_km} km \u00B7 elev ${d.iss.elev_deg}\u00B0`);"
-"(d.sondes||[]).forEach(sn=>L.circleMarker([sn.lat,sn.lon],{radius:6,color:'#ffb347',weight:2,fillOpacity:.5})"
-".addTo(layer).bindPopup(`<b>${sn.type||'sonde'} ${sn.serial}</b><br>${(sn.alt_m/1000).toFixed(1)} km ${sn.vel_v>=0?'\u2191':'\u2193'}`));"
-"(d.ships||[]).forEach(sh=>L.circleMarker([sh.lat,sh.lon],{radius:5,color:'#4fd1c5',weight:2,fillOpacity:.5})"
-".addTo(layer).bindPopup(`<b>${sh.name||'ship'}</b><br>${sh.sog_kt.toFixed(1)} kt \u00B7 ${sh.cog}\u00B0`));}"
+"}"
 "let tempF=false;"
 "async function load(){try{"
 "const r=await fetch('/api/state');const d=await r.json();metric=!!d.metric;lastd=d;"
 "let w=d.weather?` &nbsp;|&nbsp; ${tempF?Math.round(d.weather.temp_c*9/5+32)+'\\u00B0F':d.weather.temp_c+'\\u00B0C'} ${d.weather.desc}, wind ${d.weather.wind_kmh} km/h`:'';"
 "const n=d.net||{};"
-"document.getElementById('hdr').innerHTML=`${d.city||''} (${(+d.lat).toFixed(3)}, ${(+d.lon).toFixed(3)}), radius ${d.radius_km} km${w}`+((d.stats&&d.stats.metar)?`<br><span style='font-family:ui-monospace,monospace;font-size:12px'>${d.stats.metar}${(d.stats.taf?`<br>${d.stats.taf}`:'')}</span>`:'');"
+"document.getElementById('hdr').innerHTML=`${d.city||''} (${(+d.lat).toFixed(3)}, ${(+d.lon).toFixed(3)}), radius ${d.radius_km} km${w}`;"
 "const s=d.stats||{};document.getElementById('cards').innerHTML="
 "`<div class='card'>Network<b>${n.ssid?`${n.ssid} ${n.rssi||''} dBm`:location.host}</b>${[n.ip,n.mdns,n.heap_int?`RAM ${Math.round(n.heap_int/1024)} KB`:'',s.version?`v${s.version}`:''].filter(Boolean).join(' \\u00B7 ')}</div>`+"
 "`<div class='card'>Unique aircraft<b>${s.unique_aircraft||0}</b></div>`+"
 "`<div class='card'>Max altitude<b>${grp(s.max_alt_ft||0)} ft</b></div>`+"
 "`<div class='card'>Fastest<b>${s.max_gs_kt||0} kt</b></div>`+"
 "`<div class='card'>Farthest<b>${s.max_dist_km||0} km (${s.max_dist_callsign||'-'})</b></div>`+"
-"`<div class='card'>Uptime<b>${s.uptime_min||0} min</b></div>`+"
-"((s.days&&s.days.length)?`<div class='card'>Last days<b style='display:flex;align-items:flex-end;gap:2px;height:28px'>${s.days.slice(-14).map(dd=>`<i title='${dd.d}: ${dd.u}' style='display:block;width:8px;background:#5dd39e;height:${Math.max(2,Math.round(28*dd.u/Math.max(...s.days.map(x=>x.u),1)))}px'></i>`).join('')}</b></div>`:'');"
+"`<div class='card'>Uptime<b>${s.uptime_min||0} min</b></div>`;"
 "const ob=document.getElementById('otabtn');ob.disabled=!d.ota_enabled;"
 "const bn=(d.stats&&d.stats.board)||'';const vv=(d.stats&&d.stats.version)||'X.Y.Z';"
 "const ota7b=/7B/i.test(bn),otaP4=/Tab5/i.test(bn);"
@@ -486,7 +479,7 @@ static const char INDEX_HTML[] =
 "c.input_map=inSerialize();"
 "c.local_adsb_use=document.getElementById('c_local_adsb_use').value==='1';"
 "['taf','iss','sonde','ships','airspace'].forEach(k=>c[k+'_enabled']=document.getElementById('c_'+k+'_enabled').value==='1');"
-"['metric_units','metar_decoded','follow_mode','temp_f'].forEach(k=>c[k]=document.getElementById('c_'+k).value==='1');"
+"['metric_units','follow_mode','temp_f'].forEach(k=>c[k]=document.getElementById('c_'+k).value==='1');"
 "c.favs=favs.map(f=>f&&f.name?f:{name:'',lat:0,lon:0});"
 "const num=v=>parseFloat(String(v).replace(',','.'));"
 "const la=num(document.getElementById('c_lat').value),lo=num(document.getElementById('c_lon').value);"
@@ -646,7 +639,6 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "input_map", c->input_map);
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
-    cJSON_AddBoolToObject(root, "metar_decoded", c->metar_decoded);
     cJSON_AddBoolToObject(root, "follow_mode", c->follow_mode);
     cJSON *jf = cJSON_AddArrayToObject(root, "favs");
     for (int f = 0; f < 3; f++) {
@@ -718,7 +710,6 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "airspace_enabled", c->airspace_enabled);
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
-    cJSON_AddBoolToObject(root, "metar_decoded", c->metar_decoded);
     cJSON_AddBoolToObject(root, "follow_mode", c->follow_mode);
     cJSON *favs = cJSON_AddArrayToObject(root, "favs");
     for (int f = 0; f < 3; f++) {
@@ -832,9 +823,6 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "temp_f")))) {
         c->temp_f = cJSON_IsTrue(j);
-    }
-    if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "metar_decoded")))) {
-        c->metar_decoded = cJSON_IsTrue(j);
     }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "follow_mode")))) {
         c->follow_mode = cJSON_IsTrue(j);

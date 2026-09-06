@@ -51,7 +51,7 @@ static lv_obj_t *s_ta_oaip;
 static lv_obj_t *s_ta_carto, *s_ta_tileurl;
 static lv_obj_t *s_sw_route;
 static lv_obj_t *s_slider_day, *s_slider_night, *s_sw_clk12, *s_sw_brightctl;
-static lv_obj_t *s_dd_units, *s_dd_metar, *s_sw_cycle;
+static lv_obj_t *s_dd_units, *s_sw_cycle;
 static lv_obj_t *s_sw_map_light;
 static lv_obj_t *s_sw_ladsb;
 static lv_obj_t *s_slider_radius, *s_radius_label;
@@ -355,7 +355,6 @@ static void save_cb(lv_event_t *e)
         cfg->metric_units = u == 2;
         cfg->temp_f = u == 1;
     }
-    cfg->metar_decoded = lv_dropdown_get_selected(s_dd_metar) == 1;
     cfg->follow_mode = !lv_obj_has_state(s_sw_cycle, LV_STATE_CHECKED);
     strlcpy(cfg->watch_regs, lv_textarea_get_text(s_ta_watch), sizeof(cfg->watch_regs));
     strlcpy(cfg->mqtt_uri, lv_textarea_get_text(s_ta_mqtt), sizeof(cfg->mqtt_uri));
@@ -707,10 +706,6 @@ void ui_settings_open(void)
     lv_dropdown_set_options(s_dd_units, L()->units_opts);
     lv_dropdown_set_selected(s_dd_units,
                              cfg->metric_units ? 2 : (cfg->temp_f ? 1 : 0));
-    add_label(p, L()->metar_lbl, 380, 112);
-    s_dd_metar = add_dropdown(p, 380, 136, 300, NULL);
-    lv_dropdown_set_options(s_dd_metar, L()->metar_opts);
-    lv_dropdown_set_selected(s_dd_metar, cfg->metar_decoded ? 1 : 0);
 
     add_section(p, L()->sec_screen, 202);
     add_label(p, L()->night_from, 0, 228);
