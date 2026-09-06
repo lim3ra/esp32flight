@@ -92,6 +92,10 @@ static void publish_discovery(void)
     static const char *k_retired[] = {
         "homeassistant/button/esp32flight_next_view/config",
         "homeassistant/switch/esp32flight_screensaver/config",
+        /* the state topics outlive the entity the same way the configs do */
+        "esp32flight/switch/screensaver/state",
+        "esp32flight/button/next_view/press",
+        "esp32flight/light/backlight/state",
     };
     for (size_t i = 0; i < sizeof(k_retired) / sizeof(k_retired[0]); i++) {
         esp_mqtt_client_publish(s_client, k_retired[i], "", 0, 1, 1);
