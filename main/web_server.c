@@ -1011,7 +1011,19 @@ static esp_err_t ota_post(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_begin failed");
     }
 
+    /* Internal RAM is the scarce pool here and an upload arrives on top of
+     * the TLS and httpd buffers already in flight. Upstream does not check
+     * this allocation, so a device low on internal heap wrote through a
+     * NULL pointer in httpd_req_recv() below. Observed after 23 h uptime
+     * with the internal minimum down to 10 KB. */
     char *buf = malloc(4096);
+    if (buf == NULL) {
+        esp_ota_abort(ota);
+        ESP_LOGE(TAG, "OTA: no internal RAM for the receive buffer (free %u)",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "out of memory - restart the device and retry");
+    }
     int remaining = req->content_len;
     bool checked = false;
     while (remaining > 0) {
