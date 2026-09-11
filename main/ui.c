@@ -187,10 +187,15 @@ static lv_obj_t *s_card_vals[6];
  * Elevation measures "in the zenith" well and "audible" badly, and audible is
  * what this bar is for. A 737 at 790 m and 5.5 km out is 8 degrees up and
  * impossible to miss by ear; an A321 at 10.7 km and 11.5 km out is 43 degrees
- * up and inaudible. Sound falls off with slant range, so one threshold on it
- * covers both ends: dead overhead at cruise is 10.7 km slant and qualifies,
- * while the same cruiser 8 km off to the side is 13.3 km and does not. */
-#define TICKER_SLANT_KM   12.0   /* <= this, in three dimensions, counts */
+ * up and inaudible. Sound falls off with slant range, so that is the measure.
+ *
+ * Note what 8 km implies: an aircraft cannot be within 8 km in three
+ * dimensions if its altitude alone exceeds that, so nothing above ~26000 ft
+ * ever qualifies, however perfectly overhead it is. That is deliberate - this
+ * announces the traffic you can hear, which is approach and departure work,
+ * not the cruise layer. Raise it towards 12 km to let near-vertical cruise
+ * passes back in. */
+#define TICKER_SLANT_KM   8.0    /* <= this, in three dimensions, counts */
 #define TICKER_WINDOW_S   120    /* how far ahead to announce */
 #define TICKER_MAX        4      /* queue depth when several qualify at once */
 #define TICKER_ROTATE_MS  4000   /* dwell per entry while rotating */
