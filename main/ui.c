@@ -183,7 +183,14 @@ static lv_obj_t *s_card_vals[6];
  * ground distance, so it means the same thing for an airliner at 11 km and a
  * helicopter at 300 m - 2 km out is directly overhead for one and low on the
  * horizon for the other. */
-#define TICKER_ELEV_DEG   70.0   /* >= this above the horizon counts */
+/* Slant range - the real three-dimensional distance - not elevation angle.
+ * Elevation measures "in the zenith" well and "audible" badly, and audible is
+ * what this bar is for. A 737 at 790 m and 5.5 km out is 8 degrees up and
+ * impossible to miss by ear; an A321 at 10.7 km and 11.5 km out is 43 degrees
+ * up and inaudible. Sound falls off with slant range, so one threshold on it
+ * covers both ends: dead overhead at cruise is 10.7 km slant and qualifies,
+ * while the same cruiser 8 km off to the side is 13.3 km and does not. */
+#define TICKER_SLANT_KM   12.0   /* <= this, in three dimensions, counts */
 #define TICKER_WINDOW_S   120    /* how far ahead to announce */
 #define TICKER_MAX        4      /* queue depth when several qualify at once */
 #define TICKER_ROTATE_MS  4000   /* dwell per entry while rotating */
@@ -914,7 +921,7 @@ static void ticker_update(bool advance)
     if (s_tick_bar == NULL) {
         return;
     }
-    struct { const shown_flight_t *sf; int eta; double elev; } cand[TICKER_MAX];
+    struct { const shown_flight_t *sf; int eta; double elev, slant; } cand[TICKER_MAX];
     int n = 0;
 
     for (int i = 0; i < s_shown_count; i++) {
@@ -922,29 +929,36 @@ static void ticker_update(bool advance)
         if (!ac->has_pos || ac->on_ground || ac->dist_nm < 0) {
             continue;
         }
+        double alt_km = ac->alt_baro_ft * 0.0003048;
+        double ground = ac->dist_nm * 1.852;
         int    eta;
-        double elev = geo_elevation_deg(ac->dist_nm * 1.852, ac->alt_baro_ft);
-        if (elev >= TICKER_ELEV_DEG) {
-            eta = 0;                    /* above me right now */
+        double slant = sqrt(ground * ground + alt_km * alt_km);
+        if (slant <= TICKER_SLANT_KM) {
+            eta = 0;                    /* close enough to hear right now */
         } else {
             double t_s, cpa_km;
             if (!geo_cpa(s_home_lat, s_home_lon, ac->lat, ac->lon,
                          ac->track_deg, ac->gs_kts, &t_s, &cpa_km)) {
                 continue;
             }
-            elev = geo_elevation_deg(cpa_km, ac->alt_baro_ft);
-            if (t_s > TICKER_WINDOW_S || elev < TICKER_ELEV_DEG) {
+            slant = sqrt(cpa_km * cpa_km + alt_km * alt_km);
+            if (t_s > TICKER_WINDOW_S || slant > TICKER_SLANT_KM) {
                 continue;
             }
             eta = (int)t_s;
         }
+        double elev = geo_elevation_deg(eta == 0 ? ground
+                                                : sqrt(slant * slant - alt_km * alt_km),
+                                       ac->alt_baro_ft);
         /* insertion sort: overhead now ahead of predicted, then steepest
            first, so the queue reads in the order you would look up */
+        /* insertion sort: audible now ahead of predicted, then nearest in
+           three dimensions first - which is the order they are loudest in */
         int pos = n;
         while (pos > 0) {
             bool prev_now = cand[pos - 1].eta == 0, this_now = eta == 0;
             if (prev_now != this_now ? this_now
-                                     : elev > cand[pos - 1].elev) {
+                                     : slant < cand[pos - 1].slant) {
                 if (pos < TICKER_MAX) {
                     cand[pos] = cand[pos - 1];
                 }
@@ -957,6 +971,7 @@ static void ticker_update(bool advance)
             cand[pos].sf = &s_shown[i];
             cand[pos].eta = eta;
             cand[pos].elev = elev;
+            cand[pos].slant = slant;
             if (n < TICKER_MAX) {
                 n++;
             }
@@ -1000,11 +1015,12 @@ static void ticker_update(bool advance)
         snprintf(more, sizeof(more), "  \xC2\xB7  %d/%d", idx + 1, n);
     }
     char ua[20], txt[288];
-    snprintf(txt, sizeof(txt), "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %d\xC2\xB0  \xC2\xB7  %s%s",
+    snprintf(txt, sizeof(txt),
+             "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %.1f km  \xC2\xB7  %d\xC2\xB0  \xC2\xB7  %s%s",
              ac->callsign[0] ? ac->callsign : ac->hex,
              ac->type_icao[0] ? ac->type_icao : "?",
              route, units_alt(ac->alt_baro_ft, ua, sizeof(ua)),
-             (int)(cand[idx].elev + 0.5), when, more);
+             cand[idx].slant, (int)(cand[idx].elev + 0.5), when, more);
     label_set_if_changed(s_tick_txt, txt);
 
     const char *lcode = airline_code(ac, &best->route);
