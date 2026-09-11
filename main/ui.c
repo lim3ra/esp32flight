@@ -1016,11 +1016,11 @@ static void ticker_update(bool advance)
     }
     char ua[20], txt[288];
     snprintf(txt, sizeof(txt),
-             "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %.1f km  \xC2\xB7  %d\xC2\xB0  \xC2\xB7  %s%s",
+             "%s  \xC2\xB7  %s  \xC2\xB7  %s%s  \xC2\xB7  %.1f km  \xC2\xB7  %s%s",
              ac->callsign[0] ? ac->callsign : ac->hex,
              ac->type_icao[0] ? ac->type_icao : "?",
              route, units_alt(ac->alt_baro_ft, ua, sizeof(ua)),
-             cand[idx].slant, (int)(cand[idx].elev + 0.5), when, more);
+             cand[idx].slant, when, more);
     label_set_if_changed(s_tick_txt, txt);
 
     const char *lcode = airline_code(ac, &best->route);
@@ -1070,6 +1070,7 @@ static void build_ticker(lv_obj_t *parent)
      * edge: the aircraft list's scrollbar sits right on that boundary and
      * the chip was touching it. */
     lv_obj_set_style_pad_left(s_tick_bar, UISX(14), 0);
+    lv_obj_set_style_pad_right(s_tick_bar, UISX(12), 0);
     lv_obj_set_style_pad_column(s_tick_bar, UISX(10), 0);
     lv_obj_set_flex_flow(s_tick_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_tick_bar, LV_FLEX_ALIGN_START,
@@ -1098,6 +1099,14 @@ static void build_ticker(lv_obj_t *parent)
     lv_obj_add_flag(s_tick_logo, LV_OBJ_FLAG_HIDDEN);
 
     s_tick_txt = make_label(s_tick_bar, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    /* Take whatever width the chip and logo leave, and ellipsize rather than
+     * run past the panel edge, which is what it did. Deliberately not
+     * LV_LABEL_LONG_SCROLL_CIRCULAR, tempting as the news-ticker metaphor
+     * makes it: AVOID_TEAR mode 3 escalates every partial redraw to a full
+     * 1.23 MB framebuffer copy, so a permanently animating label is exactly
+     * the continuous load that tears this panel. */
+    lv_obj_set_flex_grow(s_tick_txt, 1);
+    lv_label_set_long_mode(s_tick_txt, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_tick_txt, "");
 }
 
