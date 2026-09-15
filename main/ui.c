@@ -1598,17 +1598,27 @@ static void idle_timer_cb(lv_timer_t *t)
      * boundary instead of being overwritten ten seconds later. */
     {
         static int applied = -2;
+        static uint8_t applied_want;
         int night = cfg->brightness_ctl ? night_now() : -1;
-        if (night >= 0 && night != applied) {
+        uint8_t want = night > 0 ? cfg->bright_night : cfg->bright_day;
+        /* Re-applied on a boundary, and also when the band's own level was
+         * edited (settings or web panel) - otherwise the slider's live
+         * preview stayed on the panel until the next boundary with HA
+         * still showing the old level. A brightness command from HA moves
+         * cfg->brightness only, so it keeps holding until the boundary. */
+        if (night >= 0 && (night != applied || want != applied_want)) {
             applied = night;
-            uint8_t want = night ? cfg->bright_night : cfg->bright_day;
-            if (cfg->brightness != want) {
-                cfg->brightness = want;
-                ESP_LOGI(TAG, "%s brightness -> %d%%",
-                         night ? "night" : "day", want);
-                ui_apply_brightness();
-                mqtt_pub_backlight_changed();
-            }
+            applied_want = want;
+            ESP_LOGI(TAG, "%s brightness -> %d%%",
+                     night ? "night" : "day", want);
+            cfg->brightness = want;
+            ui_apply_brightness();
+            /* The crossing owns the panel, so tell HA it is on rather than
+             * leaving the light at whatever was last commanded over MQTT:
+             * the entity used to sit at OFF over a screen the morning step
+             * had already relit. This also relights a panel HA had really
+             * switched off, which bl_pct() alone cannot do on every board. */
+            mqtt_pub_backlight_on(true);
         } else if (night < 0) {
             applied = -2;       /* re-evaluate once the clock is set */
         }
@@ -1997,10 +2007,11 @@ bool ui_input_action(const char *a)
         return true;
     }
     if (strcmp(a, "wake") == 0) {
-        /* nothing switches the panel off now; re-assert the level in case
-         * something else drove the backlight */
+        /* re-assert the level in case something else drove the backlight,
+         * and tell HA the panel is lit again */
         waveshare_rgb_lcd_bl_on();
         ui_apply_brightness();
+        mqtt_pub_backlight_on(true);
         return true;
     }
     return false;
