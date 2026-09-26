@@ -696,23 +696,6 @@ static void radar_tiles_want(void)
     }
 }
 
-static void radar_zoom_cb(lv_event_t *e)
-{
-    int dir = (int)(intptr_t)lv_event_get_user_data(e);
-    double z = s_radar_zoom * (dir > 0 ? 1.0 / 1.5 : 1.5);
-    if (z < 0.18) {
-        z = 0.18;
-    }
-    if (z > 3.4) {
-        z = 3.4;
-    }
-    if (z > 0.95 && z < 1.06) {
-        z = 1.0;   /* snap back to the exact radius fit */
-    }
-    s_radar_zoom = z;
-    radar_tiles_want();
-}
-
 static void radar_dot_cb(lv_event_t *e)
 {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
@@ -1194,23 +1177,6 @@ static void build_radar_panel(lv_obj_t *scr)
     lv_obj_t *rattr = make_label(s_radar_panel, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
     lv_label_set_text(rattr, map_attribution());
     lv_obj_align(rattr, LV_ALIGN_BOTTOM_LEFT, UISX(6), -2);
-
-    static const char *rzsym[2] = { LV_SYMBOL_PLUS, LV_SYMBOL_MINUS };
-    for (int zi = 0; zi < 2; zi++) {
-        lv_obj_t *zb = lv_btn_create(s_radar_panel);
-        lv_obj_set_size(zb, UISX(52), UISY(44));
-        lv_obj_align(zb, LV_ALIGN_BOTTOM_RIGHT, -UISX(10), -UISY(78) + zi * UISY(52));
-        lv_obj_set_style_bg_color(zb, COL_ACCENT, 0);
-        lv_obj_set_style_bg_opa(zb, LV_OPA_90, 0);
-        lv_obj_set_style_shadow_width(zb, 12, 0);
-        lv_obj_set_style_shadow_opa(zb, LV_OPA_40, 0);
-        lv_obj_add_event_cb(zb, radar_zoom_cb, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)(zi == 0 ? 1 : -1));
-        lv_obj_t *zl = lv_label_create(zb);
-        lv_obj_set_style_text_color(zl, COL_BG, 0);
-        lv_label_set_text(zl, rzsym[zi]);
-        lv_obj_center(zl);
-    }
 
     s_radar_range = make_label(s_radar_panel, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
     lv_obj_align(s_radar_range, LV_ALIGN_BOTTOM_RIGHT, -UISX(10), -UISY(6));
