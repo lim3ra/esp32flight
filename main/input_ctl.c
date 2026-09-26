@@ -229,8 +229,7 @@ bool input_ctl_dispatch(const char *action)
         char t[32];
         snprintf(t, sizeof(t), "Brightness %d%%", b);
         ui_toast(t);
-        /* bl_pct() lights the panel, so this is an on as far as HA goes */
-        mqtt_pub_backlight_on(true);
+        mqtt_pub_backlight_changed();
         save_later();
         return true;
     }
