@@ -63,6 +63,23 @@ static void publish_bl_state(void)
     esp_mqtt_client_publish(s_client, BL_STATE_TOPIC, s_light_on ? "ON" : "OFF", 0, 1, 1);
     esp_mqtt_client_publish(s_client, BL_BRI_TOPIC, bri, 0, 1, 1);
 }
+
+/* Drive the panel to match the light's on/off state. Guarded on the current
+ * state: bl_on() re-asserts full brightness, so calling it on an already-lit
+ * panel would flash it before ui_apply_brightness() pulls it back down. */
+static void bl_set_on(bool on)
+{
+    if (on == s_light_on) {
+        return;
+    }
+    s_light_on = on;
+    if (on) {
+        waveshare_rgb_lcd_bl_on();
+        ui_apply_brightness();
+    } else {
+        waveshare_rgb_lcd_bl_off();
+    }
+}
 #endif
 
 static void publish_discovery(void)
@@ -161,12 +178,9 @@ static void handle_bl_command(const char *topic, size_t tlen,
     val[dlen] = '\0';
     if (tlen == strlen(BL_SET_TOPIC) && strncmp(topic, BL_SET_TOPIC, tlen) == 0) {
         if (strcmp(val, "ON") == 0) {
-            s_light_on = true;
-            waveshare_rgb_lcd_bl_on();
-            ui_apply_brightness();
+            bl_set_on(true);
         } else if (strcmp(val, "OFF") == 0) {
-            s_light_on = false;
-            waveshare_rgb_lcd_bl_off();
+            bl_set_on(false);
         }
         publish_bl_state();
         return;
@@ -229,6 +243,16 @@ void mqtt_pub_backlight_changed(void)
     if (s_client != NULL && s_connected) {
         publish_bl_state();
     }
+#endif
+}
+
+void mqtt_pub_backlight_on(bool on)
+{
+#ifndef APKFLIGHT
+    bl_set_on(on);
+    mqtt_pub_backlight_changed();
+#else
+    (void)on;
 #endif
 }
 
