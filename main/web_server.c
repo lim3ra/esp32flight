@@ -18,6 +18,7 @@
 
 #include "cJSON.h"
 #include "lvgl_port.h"
+#include "eventlog.h"
 #include "settings.h"
 #include "input_ctl.h"
 #include "airports.h"
@@ -1096,6 +1097,23 @@ void web_metrics_publish(int count, int unique, int max_alt_ft, double nearest_k
     s_metric.nearest_km = nearest_km;
 }
 
+/* The durable event ring: why the device last lost the network or restarted
+ * itself, readable long after the fact and across reboots. */
+static esp_err_t events_get(httpd_req_t *req)
+{
+    AUTH_GUARD(req);
+    char *buf = malloc(2048);
+    if (buf == NULL) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+    }
+    size_t len = eventlog_dump(buf, 2048);
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    esp_err_t err = httpd_resp_send(req, len ? buf : "(no events recorded)\n",
+                                    HTTPD_RESP_USE_STRLEN);
+    free(buf);
+    return err;
+}
+
 static esp_err_t metrics_get(httpd_req_t *req)
 {
     AUTH_GUARD(req);
@@ -1194,6 +1212,7 @@ void web_server_start(void)
         { .uri = "/api/input/last", .method = HTTP_GET, .handler = input_last_get },
 #endif
         { .uri = "/metrics", .method = HTTP_GET, .handler = metrics_get },
+        { .uri = "/api/events", .method = HTTP_GET, .handler = events_get },
         { .uri = "/ota", .method = HTTP_POST, .handler = ota_post },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

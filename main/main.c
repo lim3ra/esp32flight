@@ -10,6 +10,7 @@
 #include "airports.h"
 #include "flight_task.h"
 #include "logos.h"
+#include "eventlog.h"
 #include "settings.h"
 #include "input_ctl.h"
 #include "tilemap.h"
@@ -47,6 +48,12 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
     settings_load();
+
+    /* After NVS is up, so the ring can be read and appended to. The reset
+     * reason is the first thing worth keeping: it is the difference between
+     * "someone pulled the plug" and "it restarted itself". */
+    eventlog_init();
+    eventlog_add("boot: reset reason %d", (int)esp_reset_reason());
 
     ESP_ERROR_CHECK(waveshare_esp32_s3_rgb_lcd_init());
     waveshare_rgb_lcd_bl_on();

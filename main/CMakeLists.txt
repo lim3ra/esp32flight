@@ -41,6 +41,7 @@ idf_component_register(
         "lang.c"
         "mqtt_pub.c"
         "settings.c"
+        "eventlog.c"
         "input_ctl.c"
         "theme.c"
         "tilemap.c"
