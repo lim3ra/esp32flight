@@ -197,8 +197,9 @@ static lv_obj_t *s_card_vals[6];
  * passes back in. */
 #define TICKER_SLANT_KM   8.0    /* <= this, in three dimensions, counts */
 #define TICKER_WINDOW_S   120    /* how far ahead to announce */
-#define TICKER_MAX        4      /* queue depth when several qualify at once */
+#define TICKER_MAX        6      /* queue depth when several qualify at once */
 #define TICKER_ROTATE_MS  4000   /* dwell per entry while rotating */
+#define TICKER_HOLD_MS    15000  /* freeze the rotation this long after a touch */
 static lv_obj_t *s_tick_bar, *s_tick_chip, *s_tick_logo, *s_tick_txt;
 static char      s_tick_hex[ICAO_HEX_LEN];
 
@@ -1030,7 +1031,11 @@ static void ticker_update(bool advance)
 static void ticker_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    ticker_update(true);
+    /* Four seconds is not long enough to read an entry and decide to tap it,
+     * so recent input holds the queue still. The contents still refresh - it
+     * is only the advance to the next entry that waits. */
+    bool reading = lv_disp_get_inactive_time(NULL) < TICKER_HOLD_MS;
+    ticker_update(!reading);
 }
 
 static void card_open_cb(lv_event_t *e)
@@ -1042,6 +1047,37 @@ static void card_open_cb(lv_event_t *e)
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_card);
     card_render();
+}
+
+/* Tapping the bar makes whatever it is announcing the selection: the map
+ * bubble, the list highlight and the summary card all follow, and the
+ * auto-cycle timer is pushed back so it does not move on a second later.
+ * s_tick_hex is the aircraft currently in the rotation slot. */
+static void ticker_click_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_tick_hex[0] == '\0') {
+        return;
+    }
+    for (int i = 0; i < s_shown_count; i++) {
+        if (strcmp(s_shown[i].ac.hex, s_tick_hex) != 0) {
+            continue;
+        }
+        s_selected = i;
+        strlcpy(s_selected_hex, s_shown[i].ac.hex, sizeof(s_selected_hex));
+        s_radar_bub_off = false;
+        render_list_selection();
+        render_right();
+        int row = row_of_shown(i);
+        if (row >= 0) {
+            lv_obj_scroll_to_view(s_list_rows[row], LV_ANIM_ON);
+        }
+        if (s_cycle_timer != NULL) {
+            lv_timer_reset(s_cycle_timer);
+        }
+        card_open_cb(NULL);
+        return;
+    }
 }
 
 static void build_ticker(lv_obj_t *parent)
@@ -1063,7 +1099,9 @@ static void build_ticker(lv_obj_t *parent)
     lv_obj_set_flex_flow(s_tick_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_tick_bar, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(s_tick_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_tick_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_tick_bar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_tick_bar, ticker_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_tick_bar, LV_OBJ_FLAG_HIDDEN);
 
     /* the red "breaking" chip */
