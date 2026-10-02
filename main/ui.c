@@ -176,9 +176,9 @@ static lv_obj_t *s_radar_home;
 /* Focus mode: one aircraft, everything else out of the way. The detail bar
  * lies over the bottom of the map rather than in the middle of it - the
  * point is to keep watching the thing being described. */
-#define FOCUS_BAR_H   96
+#define FOCUS_BAR_H   118
 static lv_obj_t *s_focus_bar, *s_focus_logo, *s_focus_flag;
-static lv_obj_t *s_focus_top, *s_focus_bot;
+static lv_obj_t *s_focus_top, *s_focus_mid, *s_focus_bot;
 static char      s_focus_hex[ICAO_HEX_LEN];   /* empty = not focused */
 
 /* Overhead ticker: the aircraft that is passing, or is about to pass,
@@ -1066,29 +1066,34 @@ static void focus_render(void)
         lv_obj_add_flag(s_focus_flag, LV_OBJ_FLAG_HIDDEN);
     }
 
+    /* identity */
     char top[160];
-    snprintf(top, sizeof(top), "%s%s%s  \xC2\xB7  %s%s%s",
+    snprintf(top, sizeof(top), "%s%s%s%s%s%s%s",
              ac->callsign[0] ? ac->callsign : ac->hex,
-             sf->iata[0] ? "  " : "", sf->iata,
-             ac->reg[0] ? ac->reg : ac->hex,
+             sf->iata[0] ? "  \xC2\xB7  " : "", sf->iata,
+             ac->reg[0] ? "  \xC2\xB7  " : "", ac->reg,
              ac->type_icao[0] ? "  \xC2\xB7  " : "",
              ac->type_icao[0] ? ac->type_icao : "");
     label_set_if_changed(s_focus_top, top);
 
-    char route[128] = "";
+    /* where it is going, and for whom */
+    char mid[192];
     if (rt != NULL) {
-        snprintf(route, sizeof(route), "%s %s " LV_SYMBOL_RIGHT " %s %s  \xC2\xB7  ",
+        snprintf(mid, sizeof(mid), "%s %s  " LV_SYMBOL_RIGHT "  %s %s%s%s",
                  rt->origin.iata[0] ? rt->origin.iata : rt->origin.icao,
                  rt->origin.city,
                  rt->destination.iata[0] ? rt->destination.iata : rt->destination.icao,
-                 rt->destination.city);
-    } else if (sf->airline[0]) {
-        snprintf(route, sizeof(route), "%s  \xC2\xB7  ", sf->airline);
+                 rt->destination.city,
+                 sf->airline[0] ? "  \xC2\xB7  " : "", sf->airline);
+    } else {
+        snprintf(mid, sizeof(mid), "%s", sf->airline[0] ? sf->airline : "-");
     }
-    char ua[20], us[20], bot[320];
+    label_set_if_changed(s_focus_mid, mid);
+
+    /* the numbers */
+    char ua[20], us[20], bot[224];
     snprintf(bot, sizeof(bot),
-             "%s%s  \xC2\xB7  %s  \xC2\xB7  %+d fpm  \xC2\xB7  %.1f km  \xC2\xB7  %d\xC2\xB0%s%s",
-             route,
+             "%s  \xC2\xB7  %s  \xC2\xB7  %+d fpm  \xC2\xB7  %.1f km  \xC2\xB7  %d\xC2\xB0%s%s",
              ac->on_ground ? L()->ground : units_alt(ac->alt_baro_ft, ua, sizeof(ua)),
              units_speed(ac->gs_kts, us, sizeof(us)),
              ac->baro_rate_fpm, ac->dist_nm * 1.852, (int)ac->track_deg,
@@ -1111,25 +1116,33 @@ static void build_focus_bar(lv_obj_t *parent)
 
     s_focus_logo = lv_img_create(s_focus_bar);
     lv_img_set_pivot(s_focus_logo, 0, 0);
-    lv_img_set_zoom(s_focus_logo, 256 * UISY(40) / 90);
+    lv_img_set_zoom(s_focus_logo, 256 * UISY(42) / 90);
     lv_img_set_size_mode(s_focus_logo, LV_IMG_SIZE_MODE_REAL);
-    lv_obj_set_pos(s_focus_logo, UISX(14), UISY(12));
+    lv_obj_set_pos(s_focus_logo, UISX(14), UISY(10));
     lv_obj_add_flag(s_focus_logo, LV_OBJ_FLAG_HIDDEN);
 
     s_focus_flag = lv_img_create(s_focus_bar);
-    lv_obj_set_pos(s_focus_flag, UISX(14), UISY(58));
+    lv_obj_set_pos(s_focus_flag, UISX(14), UISY(62));
     lv_obj_add_flag(s_focus_flag, LV_OBJ_FLAG_HIDDEN);
 
-    s_focus_top = make_label(s_focus_bar,
-                             UIFONT(&lv_font_montserrat_20, &lv_font_montserrat_14),
-                             COL_TEXT);
-    lv_obj_set_pos(s_focus_top, UISX(72), UISY(12));
-    lv_obj_set_width(s_focus_top, RADAR_W - UISX(72) - UISX(56));
+    /* font_pl_* throughout, never lv_font_montserrat_*: the built-in LVGL
+     * faces carry ASCII only, so the middle dot used as a separator (U+00B7)
+     * came out as a box. The project faces cover 0xA0-0x24F plus the symbol
+     * glyphs. */
+    const lv_coord_t tw = RADAR_W - UISX(72) - UISX(56);
+    s_focus_top = make_label(s_focus_bar, UIFONT(&font_pl_20, &font_pl_12), COL_TEXT);
+    lv_obj_set_pos(s_focus_top, UISX(72), UISY(10));
+    lv_obj_set_width(s_focus_top, tw);
     lv_label_set_long_mode(s_focus_top, LV_LABEL_LONG_DOT);
 
+    s_focus_mid = make_label(s_focus_bar, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_focus_mid, UISX(72), UISY(46));
+    lv_obj_set_width(s_focus_mid, tw);
+    lv_label_set_long_mode(s_focus_mid, LV_LABEL_LONG_DOT);
+
     s_focus_bot = make_label(s_focus_bar, UIFONT(&font_pl_16, &font_pl_10), COL_DIM);
-    lv_obj_set_pos(s_focus_bot, UISX(72), UISY(50));
-    lv_obj_set_width(s_focus_bot, RADAR_W - UISX(72) - UISX(56));
+    lv_obj_set_pos(s_focus_bot, UISX(72), UISY(78));
+    lv_obj_set_width(s_focus_bot, tw);
     lv_label_set_long_mode(s_focus_bot, LV_LABEL_LONG_DOT);
 
     lv_obj_t *x = lv_btn_create(s_focus_bar);
