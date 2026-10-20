@@ -504,7 +504,7 @@ static void touch_reset(void)
     }
 }
 
-esp_err_t waveshare_esp32_s3_rgb_lcd_init(void)
+static esp_err_t lcd_init_here(void)
 {
     board_detect();
 
@@ -651,6 +651,27 @@ esp_err_t waveshare_esp32_s3_rgb_lcd_init(void)
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cbs, NULL));
 
     return ESP_OK;
+}
+
+/* The RGB panel and its GDMA interrupts are allocated on the core that
+ * creates them. From app_main that is core 0, next to Wi-Fi, and bounce-buffer
+ * EOF interrupts got lost under Wi-Fi load (measured on home-panel-v2, same
+ * board): so build the panel from a short task pinned to core 1. */
+static esp_err_t s_init_err;
+
+static void lcd_init_task(void *arg)
+{
+    s_init_err = lcd_init_here();
+    xTaskNotifyGive((TaskHandle_t)arg);
+    vTaskDelete(NULL);
+}
+
+esp_err_t waveshare_esp32_s3_rgb_lcd_init(void)
+{
+    xTaskCreatePinnedToCore(lcd_init_task, "lcd_init", 8192, xTaskGetCurrentTaskHandle(), 5, NULL, 1);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    ESP_LOGI(TAG, "panel interrupts on core 1");
+    return s_init_err;
 }
 
 static esp_err_t bl_gpio_set(int level)

@@ -22,6 +22,25 @@ static const char *TAG = "lv_port";                      // Tag for logging
 static SemaphoreHandle_t lvgl_mux;                       // LVGL mutex for synchronization
 static TaskHandle_t lvgl_task_handle = NULL;             // Handle for the LVGL task
 
+/* Wait for the panel to take the new framebuffer, at most 100 ms (a frame is
+ * ~37 ms at 25 MHz). With portMAX_DELAY one lost frame interrupt froze LVGL
+ * for good. The ISR counts (vTaskNotifyGiveFromISR) and Take only returns
+ * on a fresh notification, so 0 means timeout. Do not switch this to
+ * xTaskNotifyWait: it returns at once on a notification left pending from an
+ * earlier frame, LVGL then draws into the buffer on screen and animated areas
+ * flicker (found on home-panel-v2, 2026-10-20). */
+static volatile uint32_t s_frame_timeouts;
+
+static inline void wait_frame(void)
+{
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100)) == 0) {
+        uint32_t n = ++s_frame_timeouts;
+        if (n == 1 || n % 100 == 0) {
+            ESP_LOGW("lvgl_port", "frame wait timed out (%u so far)", (unsigned)n);
+        }
+    }
+}
+
 #if EXAMPLE_LVGL_PORT_ROTATION_DEGREE != 0
 // Function to get the next frame buffer for double buffering
 static void *get_next_frame_buffer(esp_lcd_panel_handle_t panel_handle)
@@ -222,7 +241,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
 
             /* Wait for the current frame buffer to complete transmission */
             ulTaskNotifyValueClear(NULL, ULONG_MAX);
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            wait_frame();
 
             /* Synchronously update the dirty area for another frame buffer */
             flush_dirty_copy(flush_get_next_buf(panel_handle), color_map, &dirty_area);
@@ -253,7 +272,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
 
                 /* Wait for the current frame buffer to complete transmission */
                 ulTaskNotifyValueClear(NULL, ULONG_MAX);
-                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                wait_frame();
 
                 if (probe_result == FLUSH_PROBE_PART_COPY) {
                     /* Synchronously update the dirty area for another frame buffer */
@@ -285,7 +304,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
 
         /* Wait for the last frame buffer to complete transmission */
         ulTaskNotifyValueClear(NULL, ULONG_MAX);
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        wait_frame();
     }
 
     lv_disp_flush_ready(drv); // Mark the display flush as complete
@@ -307,7 +326,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
 
     /* Wait for the last frame buffer to complete transmission */
     ulTaskNotifyValueClear(NULL, ULONG_MAX);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    wait_frame();
 
     lv_disp_flush_ready(drv); // Mark the display flush as complete
 }
@@ -599,7 +618,7 @@ bool lvgl_port_notify_rgb_vsync(void)
     }
 #elif LVGL_PORT_AVOID_TEAR_ENABLE
     // Notify that the current RGB frame buffer has been transmitted
-    xTaskNotifyFromISR(lvgl_task_handle, ULONG_MAX, eNoAction, &need_yield); // Notify the LVGL task
+    vTaskNotifyGiveFromISR(lvgl_task_handle, &need_yield); // Notify the LVGL task (counted, see wait_frame)
 #endif
     return (need_yield == pdTRUE); // Return whether a yield is needed
 }

@@ -12,5 +12,8 @@ CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_ESPTOOLPY_FLASHFREQ_120M=y
 CONFIG_SPIRAM_SPEED_120M=y
 CONFIG_GDMA_ISR_IRAM_SAFE=y
-CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+# n, not y: with bounce buffers, a lost EOF interrupt under PSRAM load
+# desyncs the restart logic and the image stays shifted or LVGL hangs
+# for good (esp-idf #19070, fix not in v5.5; seen on home-panel-v2 too).
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=n
 CONFIG_EXAMPLE_LCD_RGB_BOUNCE_BUFFER_HEIGHT=15
