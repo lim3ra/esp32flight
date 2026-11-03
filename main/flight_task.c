@@ -468,6 +468,7 @@ static void flight_task(void *arg)
     int fetch_attempts = 0;
     int64_t last_weather_ms = -1;
     int64_t last_update_check_ms = -1;
+    int64_t last_tz_ms = esp_timer_get_time() / 1000;   /* resolved just above */
     static weather_t wx;
 #ifdef APKFLIGHT
     /* App build applies settings live (no restart): re-resolve location and
@@ -728,6 +729,20 @@ static void flight_task(void *arg)
                 }
             }
             last_weather_ms = now_ms;
+        }
+        /* The home offset was only resolved at boot, so a panel running
+         * across a DST change kept the old offset: the clock and the night
+         * window were an hour off until a reboot. Re-resolved every 3 h,
+         * under a fresh key so the tz cache does not answer it. */
+        if (primed && now_ms - last_tz_ms > 3LL * 3600 * 1000) {
+            static unsigned tz_gen;
+            char tzkey[8];
+            int off;
+            snprintf(tzkey, sizeof(tzkey), "H%u", ++tz_gen % 100000);
+            if (tz_offset_for(tzkey, lat, lon, &off) && off != tz_home_offset()) {
+                tz_set_home_offset(off);
+            }
+            last_tz_ms = now_ms;
         }
         if (primed) {
             airspace_poll(lat, lon);

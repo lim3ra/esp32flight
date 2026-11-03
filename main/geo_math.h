@@ -61,3 +61,7 @@ double geo_lon_unwrap(double ref, double lon);
  * for the given day. Returns false in polar day/night conditions. */
 bool geo_sun_times(double lat, double lon, long long epoch_utc, int tz_off_s,
                    int *rise_min, int *set_min);
+
+/* Sun elevation above the horizon in degrees (same approximation, no
+ * refraction), negative below it. */
+double geo_sun_elevation(double lat, double lon, long long epoch_utc);

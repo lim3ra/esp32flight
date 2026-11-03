@@ -214,3 +214,25 @@ bool geo_sun_times(double lat, double lon, long long epoch_utc, int tz_off_s,
     *set_min = st;
     return true;
 }
+
+double geo_sun_elevation(double lat, double lon, long long epoch_utc)
+{
+    double days = (double)epoch_utc / 86400.0 + 2440587.5 - 2451545.0;
+    double g = fmod(357.529 + 0.98560028 * days, 360.0) * M_PI / 180.0;
+    double q = fmod(280.459 + 0.98564736 * days, 360.0);
+    double l = fmod(q + 1.915 * sin(g) + 0.020 * sin(2 * g), 360.0) * M_PI / 180.0;
+    double e = (23.439 - 0.00000036 * days) * M_PI / 180.0;
+    double decl = asin(sin(e) * sin(l));
+
+    double ra = atan2(cos(e) * sin(l), cos(l)) * 180.0 / M_PI;
+    double eqt = q - fmod(ra + 360.0, 360.0);
+    while (eqt > 20) eqt -= 360;
+    while (eqt < -20) eqt += 360;
+    eqt *= 4.0;
+
+    /* hour angle from true solar time, degrees */
+    double utc_min = fmod((double)epoch_utc, 86400.0) / 60.0;
+    double h = ((utc_min + 4.0 * lon + eqt) / 4.0 - 180.0) * M_PI / 180.0;
+    double latr = lat * M_PI / 180.0;
+    return asin(sin(latr) * sin(decl) + cos(latr) * cos(decl) * cos(h)) * 180.0 / M_PI;
+}

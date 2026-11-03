@@ -1617,20 +1617,55 @@ static int night_now(void)
     return (a < b ? (m >= a && m < b) : (m >= a || m < b)) ? 1 : 0;
 }
 
+/* Outside the night window the level follows the sun, like home-panel-v2:
+ * full day level from SUN_FULL_DEG of elevation up, down to SUN_DUSK_PCT
+ * once the sun is SUN_DARK_DEG below the horizon. The morning end of the
+ * window also fades in over WAKE_FADE_MIN instead of jumping to the day
+ * level in one step. */
+#define SUN_FULL_DEG   6.0
+#define SUN_DARK_DEG  (-6.0)
+#define SUN_DUSK_PCT   15
+#define WAKE_FADE_MIN  45
+
+static uint8_t day_level(const settings_t *cfg)
+{
+    time_t now = time(NULL);
+    int lvl = cfg->bright_day;
+    if (s_home_ok) {
+        double el = geo_sun_elevation(s_home_lat, s_home_lon, (long long)now);
+        double f = (el - SUN_DARK_DEG) / (SUN_FULL_DEG - SUN_DARK_DEG);
+        f = f < 0 ? 0 : f > 1 ? 1 : f;
+        int dusk = SUN_DUSK_PCT < cfg->bright_day ? SUN_DUSK_PCT : cfg->bright_day;
+        lvl = (int)lround(dusk + (cfg->bright_day - dusk) * f);
+    }
+
+    /* minutes since the window ended, 0..1439 */
+    time_t l = now + (tz_home_known() ? tz_home_offset() : 0);
+    struct tm tm;
+    gmtime_r(&l, &tm);
+    int since = (tm.tm_hour * 60 + tm.tm_min - cfg->night_end_min + 1440) % 1440;
+    if (cfg->night_start_min != cfg->night_end_min && since < WAKE_FADE_MIN &&
+        lvl > cfg->bright_night) {
+        lvl = cfg->bright_night + (lvl - cfg->bright_night) * since / WAKE_FADE_MIN;
+    }
+    return (uint8_t)(lvl < 5 ? 5 : lvl > 100 ? 100 : lvl);
+}
+
 /* idle watcher: day/night brightness */
 static void idle_timer_cb(lv_timer_t *t)
 {
     (void)t;
     settings_t *cfg = settings_get();
 
-    /* Applied when the window is crossed rather than on every tick, so a
-     * change from the slider or from Home Assistant holds until the next
-     * boundary instead of being overwritten ten seconds later. */
+    /* Applied when the target moves rather than on every tick, so a change
+     * from the slider or from Home Assistant holds while the level is flat
+     * (all night, full day) instead of being overwritten ten seconds later;
+     * during a sun or wake ramp the ramp wins. */
     {
         static int applied = -2;
         static uint8_t applied_want;
         int night = cfg->brightness_ctl ? night_now() : -1;
-        uint8_t want = night > 0 ? cfg->bright_night : cfg->bright_day;
+        uint8_t want = night > 0 ? cfg->bright_night : day_level(cfg);
         /* Re-applied on a boundary, and also when the band's own level was
          * edited (settings or web panel) - otherwise the slider's live
          * preview stayed on the panel until the next boundary with HA
