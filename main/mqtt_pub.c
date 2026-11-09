@@ -21,6 +21,8 @@ static const char *TAG = "mqtt";
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
 #define BL_SET_TOPIC    "esp32flight/backlight/set"
 #define BL_BRI_SET      "esp32flight/backlight/brightness/set"
+/* Retained status from krk-airport-collector, shown in the airport bar */
+#define AIRPORT_TOPIC   "krk-airport/panel"
 
 static esp_mqtt_client_handle_t s_client;
 static bool s_connected;
@@ -137,6 +139,7 @@ static void publish_discovery(void)
         esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
     }
 #ifndef APKFLIGHT
+    esp_mqtt_client_subscribe(s_client, AIRPORT_TOPIC, 0);
     /* Backlight as an HA light with brightness (lim3ra's request). Only
      * when the master brightness switch is on and the panel can dim; an
      * empty retained payload removes a previously discovered entity. */
@@ -210,8 +213,20 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
 #ifndef APKFLIGHT
     } else if (event_id == MQTT_EVENT_DATA) {
         esp_mqtt_event_handle_t ev = data;
-        handle_bl_command(ev->topic, (size_t)ev->topic_len,
-                          ev->data, (size_t)ev->data_len);
+        if (ev->topic_len == (int)strlen(AIRPORT_TOPIC) &&
+            strncmp(ev->topic, AIRPORT_TOPIC, (size_t)ev->topic_len) == 0) {
+            /* The message is far below the client's buffer size, so a
+             * fragmented one is not ours to reassemble. */
+            if (ev->current_data_offset == 0 && ev->data_len == ev->total_data_len) {
+                ui_airport_feed(ev->data, ev->data_len);
+            } else {
+                ESP_LOGW(TAG, "airport message fragmented (%d bytes), ignored",
+                         ev->total_data_len);
+            }
+        } else {
+            handle_bl_command(ev->topic, (size_t)ev->topic_len,
+                              ev->data, (size_t)ev->data_len);
+        }
 #endif
     }
 }
@@ -234,7 +249,10 @@ void mqtt_pub_start(void)
     }
     esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event, NULL);
     esp_mqtt_client_start(s_client);
-    ESP_LOGI(TAG, "connecting to %s", uri);
+    /* The URI can carry user:pass@, and logs get shared: print the host only.
+     * Last '@', because a password may contain one. */
+    const char *at = strrchr(uri, '@');
+    ESP_LOGI(TAG, "connecting to %s", at != NULL ? at + 1 : uri);
 }
 
 void mqtt_pub_backlight_changed(void)

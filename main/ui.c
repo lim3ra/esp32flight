@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "lvgl.h"
 #include <ctype.h>
@@ -205,6 +206,23 @@ static char      s_focus_hex[ICAO_HEX_LEN];   /* empty = not focused */
 #define TICKER_HOLD_MS    15000  /* freeze the rotation this long after a touch */
 static lv_obj_t *s_tick_bar, *s_tick_chip, *s_tick_logo, *s_tick_txt;
 static char      s_tick_hex[ICAO_HEX_LEN];
+
+/* Airport bar: a status line over the bottom of the map, filled from the
+ * retained MQTT message of krk-airport-collector. All the fetching and deciding
+ * happens there, so this costs no socket and no TLS session on the device. The
+ * focus bar is taller and sits above it, so focus mode simply covers it. */
+#define APT_BAR_H     60
+#define APT_MSG_MAX   512
+#define APT_STALE_S   (15 * 60)
+#define APT_TICK_MS   5000
+static lv_obj_t *s_apt_bar, *s_apt_chip, *s_apt_chip_lbl;
+static lv_obj_t *s_apt_wx, *s_apt_arr, *s_apt_dep;
+static SemaphoreHandle_t s_apt_lock;
+static char          *s_apt_msg;       /* PSRAM */
+static volatile bool  s_apt_new;
+static long long      s_apt_ts;        /* message time, 0 = nothing received */
+static bool           s_apt_stale_shown;
+static int            s_apt_level = -1;
 
 /* breadcrumb trail of the selected aircraft, map mode only */
 static lv_obj_t   *s_radar_trail;
@@ -1157,6 +1175,173 @@ static void build_focus_bar(lv_obj_t *parent)
     lv_obj_center(xl);
 }
 
+/* ---------- airport bar ---------- */
+
+void ui_airport_feed(const char *data, int len)
+{
+    if (s_apt_msg == NULL || s_apt_lock == NULL) {
+        return;
+    }
+    if (len <= 0 || len >= APT_MSG_MAX) {
+        ESP_LOGW("ui", "airport message of %d bytes ignored", len);
+        return;
+    }
+    if (xSemaphoreTake(s_apt_lock, pdMS_TO_TICKS(200)) != pdTRUE) {
+        ESP_LOGW("ui", "airport message dropped, buffer busy");
+        return;
+    }
+    memcpy(s_apt_msg, data, (size_t)len);
+    s_apt_msg[len] = '\0';
+    s_apt_new = true;
+    xSemaphoreGive(s_apt_lock);
+}
+
+static void apt_set_level(int level)
+{
+    if (level == s_apt_level) {
+        return;
+    }
+    s_apt_level = level;
+    uint32_t col = 0x5a6272;    /* unknown */
+    if (level == 0) {
+        col = 0x228c50;
+    } else if (level == 1) {
+        col = 0xc27c00;
+    } else if (level == 2) {
+        col = 0xd7263d;
+    }
+    lv_obj_set_style_bg_color(s_apt_chip, lv_color_hex(col), 0);
+}
+
+/* Lines: time, level, chip, weather, next arrival, next departure */
+static void apt_parse_message(void)
+{
+    char *field[6];
+    char *p = s_apt_msg;
+    int n = 0;
+    while (n < 6 && p != NULL) {
+        field[n++] = p;
+        char *nl = strchr(p, '\n');
+        if (nl != NULL) {
+            *nl = '\0';
+            p = nl + 1;
+        } else {
+            p = NULL;
+        }
+    }
+    if (n < 6) {
+        ESP_LOGW("ui", "airport message has %d of 6 lines", n);
+        return;
+    }
+    s_apt_ts = atoll(field[0]);
+    s_apt_stale_shown = false;
+    apt_set_level(atoi(field[1]));
+    label_set_if_changed(s_apt_chip_lbl, field[2]);
+    label_set_if_changed(s_apt_wx, field[3]);
+    label_set_if_changed(s_apt_arr, field[4]);
+    label_set_if_changed(s_apt_dep, field[5]);
+}
+
+/* Labels change only when the text does, so the collector's two-minute cadence
+ * does not turn into two-minute framebuffer copies. */
+static void airport_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_apt_bar == NULL) {
+        return;
+    }
+    if (s_apt_new && xSemaphoreTake(s_apt_lock, 0) == pdTRUE) {
+        s_apt_new = false;
+        apt_parse_message();
+        xSemaphoreGive(s_apt_lock);
+    }
+    /* Before the clock is set, a received message cannot be judged old. */
+    time_t now = time(NULL);
+    bool clock_ok = now > 1600000000;
+    bool stale = s_apt_ts == 0 ||
+                 (clock_ok && llabs((long long)now - s_apt_ts) > APT_STALE_S);
+    if (stale && !s_apt_stale_shown) {
+        s_apt_stale_shown = true;
+        apt_set_level(3);
+        label_set_if_changed(s_apt_chip_lbl, "KRK NO DATA");
+        label_set_if_changed(s_apt_wx, "waiting for airport data");
+        label_set_if_changed(s_apt_arr, "");
+        label_set_if_changed(s_apt_dep, "");
+    }
+}
+
+static void build_airport_bar(lv_obj_t *parent)
+{
+    s_apt_bar = lv_obj_create(parent);
+    lv_obj_set_size(s_apt_bar, RADAR_W, UISY(APT_BAR_H));
+    lv_obj_align(s_apt_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(s_apt_bar, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_apt_bar, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(s_apt_bar, 0, 0);
+    lv_obj_set_style_radius(s_apt_bar, 0, 0);
+    lv_obj_set_style_pad_all(s_apt_bar, 0, 0);
+    /* stays clickable on purpose: a tap here must not select a hidden plane */
+    lv_obj_clear_flag(s_apt_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *row = lv_obj_create(s_apt_bar);
+    lv_obj_set_size(row, RADAR_W, UISY(30));
+    lv_obj_set_pos(row, 0, UISY(2));
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_left(row, UISX(14), 0);
+    lv_obj_set_style_pad_right(row, UISX(12), 0);
+    lv_obj_set_style_pad_column(row, UISX(10), 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    s_apt_chip = lv_obj_create(row);
+    lv_obj_set_size(s_apt_chip, LV_SIZE_CONTENT, UISY(24));
+    lv_obj_set_style_border_width(s_apt_chip, 0, 0);
+    lv_obj_set_style_radius(s_apt_chip, UISY(4), 0);
+    lv_obj_set_style_pad_hor(s_apt_chip, UISX(9), 0);
+    lv_obj_set_style_pad_ver(s_apt_chip, 0, 0);
+    lv_obj_clear_flag(s_apt_chip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    s_apt_chip_lbl = make_label(s_apt_chip, UIFONT(&font_pl_14, &font_pl_8),
+                                lv_color_white());
+    lv_label_set_text(s_apt_chip_lbl, "");
+    lv_obj_center(s_apt_chip_lbl);
+
+    /* font_pl_* for the middle dot; LONG_DOT, never a scrolling label: see the
+     * note in build_ticker about what continuous animation costs this panel */
+    s_apt_wx = make_label(row, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_flex_grow(s_apt_wx, 1);
+    lv_label_set_long_mode(s_apt_wx, LV_LABEL_LONG_DOT);
+    lv_label_set_text(s_apt_wx, "");
+
+    s_apt_arr = make_label(s_apt_bar, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_apt_arr, UISX(14), UISY(33));
+    lv_obj_set_width(s_apt_arr, RADAR_W / 2 - UISX(22));
+    lv_label_set_long_mode(s_apt_arr, LV_LABEL_LONG_DOT);
+    lv_label_set_text(s_apt_arr, "");
+
+    s_apt_dep = make_label(s_apt_bar, UIFONT(&font_pl_16, &font_pl_10), COL_TEXT);
+    lv_obj_set_pos(s_apt_dep, RADAR_W / 2, UISY(33));
+    lv_obj_set_width(s_apt_dep, RADAR_W / 2 - UISX(12));
+    lv_label_set_long_mode(s_apt_dep, LV_LABEL_LONG_DOT);
+    lv_label_set_text(s_apt_dep, "");
+}
+
+/* Airspace objects are created on demand, so they land above bars built at
+ * start-up. Checked first because moving an object redraws the panel. */
+static void bars_keep_on_top(void)
+{
+    if (s_apt_bar == NULL ||
+        (int)lv_obj_get_index(s_apt_bar) >= (int)lv_obj_get_child_cnt(s_radar_panel) - 3) {
+        return;
+    }
+    lv_obj_move_foreground(s_apt_bar);
+    lv_obj_move_foreground(s_tick_bar);
+    lv_obj_move_foreground(s_focus_bar);
+}
+
 static void build_radar_panel(lv_obj_t *scr)
 {
     s_radar_panel = make_panel(scr);
@@ -1235,12 +1420,14 @@ static void build_radar_panel(lv_obj_t *scr)
 
     lv_obj_t *rattr = make_label(s_radar_panel, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
     lv_label_set_text(rattr, map_attribution());
-    lv_obj_align(rattr, LV_ALIGN_BOTTOM_LEFT, UISX(6), -2);
+    lv_obj_align(rattr, LV_ALIGN_BOTTOM_LEFT, UISX(6), -UISY(APT_BAR_H) - 2);
 
     s_radar_range = make_label(s_radar_panel, UIFONT(&font_pl_14, &font_pl_8), COL_DIM);
-    lv_obj_align(s_radar_range, LV_ALIGN_BOTTOM_RIGHT, -UISX(10), -UISY(6));
+    lv_obj_align(s_radar_range, LV_ALIGN_BOTTOM_RIGHT, -UISX(10),
+                 -UISY(APT_BAR_H) - UISY(6));
     lv_label_set_text(s_radar_range, "");
 
+    build_airport_bar(s_radar_panel);
     build_ticker(s_radar_panel);
     build_focus_bar(s_radar_panel);
 }
@@ -1517,8 +1704,8 @@ static void render_radar_panel(void)
             if (ly < 0) {
                 ly = 0;
             }
-            if (ly > RADAR_H - UISY(60)) {
-                ly = RADAR_H - UISY(60);
+            if (ly > RADAR_H - UISY(60) - UISY(APT_BAR_H)) {
+                ly = RADAR_H - UISY(60) - UISY(APT_BAR_H);
             }
             lv_obj_set_pos(s_radar_bub, lx, ly);
         }
@@ -1527,6 +1714,7 @@ static void render_radar_panel(void)
         lv_obj_add_flag(s_radar_bub, LV_OBJ_FLAG_HIDDEN);
     }
     render_airspaces(map_mode);
+    bars_keep_on_top();
     focus_render();
     ticker_update(false);   /* refresh in place; the timer does the rotating */
 }
@@ -1706,6 +1894,9 @@ void ui_init(void)
 {
     s_shown = heap_caps_calloc(MAX_SHOWN, sizeof(*s_shown), MALLOC_CAP_SPIRAM);
     assert(s_shown != NULL);
+    /* before MQTT starts: the retained message arrives right after connecting */
+    s_apt_lock = xSemaphoreCreateMutex();
+    s_apt_msg = heap_caps_malloc(APT_MSG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, COL_BG, 0);
@@ -1731,6 +1922,7 @@ void ui_init(void)
     lv_timer_create(logo_tick_cb, 500, NULL);
     lv_timer_create(idle_timer_cb, 10000, NULL);
     lv_timer_create(ticker_timer_cb, TICKER_ROTATE_MS, NULL);
+    lv_timer_create(airport_timer_cb, APT_TICK_MS, NULL);
 
     apply_view(VIEW_RADAR);
 }
