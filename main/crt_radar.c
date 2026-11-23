@@ -1732,9 +1732,9 @@ static void tick_cb(lv_timer_t *t)
 
     if (now - s_console_ms >= 1000) {
         if (s_ticks > 0 && s_console_ms > 0) {
-            snprintf(s_frame_stat, sizeof(s_frame_stat), "DRAW %u MS %uK",
+            snprintf(s_frame_stat, sizeof(s_frame_stat), "DRAW %u MS  %u FPS",
                      (unsigned)(s_draw_us / s_ticks / 1000),
-                     (unsigned)(s_draw_px / s_ticks / 1000));
+                     (unsigned)((s_ticks * 1000 + 500) / (uint32_t)(now - s_console_ms)));
         }
         s_draw_us = s_draw_px = s_ticks = 0;
         s_console_ms = now;
