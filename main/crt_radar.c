@@ -1020,6 +1020,19 @@ static void stamp_blip(const blip_t *b, int64_t now, int sy, int x0, int x1, uin
     }
 }
 
+static inline uint32_t bear_at(const uint16_t *qrow, int dx, int dy)
+{
+    uint32_t b;
+    if (dx >= 0) {
+        uint32_t a = qrow[dx];
+        b = dy <= 0 ? a : 32768u - a;
+    } else {
+        uint32_t a = qrow[-dx];
+        b = dy > 0 ? 32768u + a : 65536u - a;
+    }
+    return b & 0xFFFF;
+}
+
 static void mark_must(uint8_t *must, int sy, int x0, int x1, const lv_area_t *r)
 {
     if (sy < r->y1 || sy > r->y2) {
@@ -1072,7 +1085,23 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
     const int ix0 = x0 > tx0 ? x0 : tx0;
     const int ix1 = x1 < tx1 ? x1 : tx1;
 
-    for (int x = ix0; x <= ix1; x++) {
+    /* Bearing along a row is monotonic - clockwise going right above the
+     * centre, anticlockwise below - so a 16-pixel chunk whose end bearings
+     * bracket no part of the active arc has no pixel to paint, and is
+     * skipped for two table reads instead of sixteen. */
+    const uint32_t arc_s = (beam - active_u - DEG_U(1)) & 0xFFFF;
+    const uint32_t arc_l = active_u + DEG_U(4);
+    for (int cx0 = ix0; cx0 <= ix1; cx0 += 16) {
+    const int cx1 = cx0 + 15 < ix1 ? cx0 + 15 : ix1;
+    if (!full && memchr(must + (cx0 - x0), 1, (size_t)(cx1 - cx0 + 1)) == NULL) {
+        uint32_t fa = bear_at(qrow, cx0 - SCOPE_C, dy), fb = bear_at(qrow, cx1 - SCOPE_C, dy);
+        uint32_t lo = dy <= 0 ? fa : fb, hi = dy <= 0 ? fb : fa;
+        uint32_t span = (hi - lo) & 0xFFFF;
+        if (((arc_s - lo) & 0xFFFF) > span && ((lo - arc_s) & 0xFFFF) >= arc_l) {
+            continue;
+        }
+    }
+    for (int x = cx0; x <= cx1; x++) {
         int dx = x - SCOPE_C;
         uint32_t b;
         if (dx >= 0) {
@@ -1124,6 +1153,7 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
             }
         }
         I[x - x0] = (uint8_t)v;
+    }
     }
 
     for (int k = 0; k < nbl; k++) {
