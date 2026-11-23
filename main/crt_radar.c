@@ -1393,13 +1393,38 @@ static void term_event_cb(lv_event_t *e)
 /* Scanlines over everything outside the scope (the scope does its own). */
 static void root_event_cb(lv_event_t *e)
 {
-    if (lv_event_get_code(e) != LV_EVENT_DRAW_POST) {
-        return;
-    }
+    lv_event_code_t code = lv_event_get_code(e);
     lv_draw_ctx_t *dc = lv_event_get_draw_ctx(e);
     const lv_area_t *c = dc->clip_area;
     const lv_area_t *s = &s_scope->coords;
+    const lv_area_t *tm = &s_termobj->coords;
     int stride = lv_area_get_width(dc->buf_area);
+    if (code == LV_EVENT_DRAW_MAIN) {
+        /* The root has no LVGL background: in direct mode LVGL tests cover
+         * against the whole frame buffer, so an opaque root would be painted
+         * under every refreshed area and wipe what the scope leaves alone.
+         * It paints only the gaps around the scope and the terminal. */
+        for (int y = c->y1; y <= c->y2; y++) {
+            uint16_t *row = (uint16_t *)dc->buf + (size_t)(y - dc->buf_area->y1) * stride - dc->buf_area->x1;
+            bool rs = y >= s->y1 && y <= s->y2;
+            bool rt = y >= tm->y1 && y <= tm->y2;
+            for (int x = c->x1; x <= c->x2; x++) {
+                if (rs && x >= s->x1 && x <= s->x2) {
+                    x = s->x2;
+                    continue;
+                }
+                if (rt && x >= tm->x1 && x <= tm->x2) {
+                    x = tm->x2;
+                    continue;
+                }
+                row[x] = s_term_bg;
+            }
+        }
+        return;
+    }
+    if (code != LV_EVENT_DRAW_POST) {
+        return;
+    }
     for (int y = c->y1 | 1; y <= c->y2; y += 2) {
         uint16_t *row = (uint16_t *)dc->buf + (size_t)(y - dc->buf_area->y1) * stride - dc->buf_area->x1;
         bool in_scope_rows = y >= s->y1 && y <= s->y2;
@@ -1710,8 +1735,7 @@ static void build_objects(void)
     lv_obj_remove_style_all(s_root);
     lv_obj_set_size(s_root, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_pos(s_root, 0, 0);
-    lv_obj_set_style_bg_color(s_root, lv_color_hex(COL_BG_HEX), 0);
-    lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(s_root, root_event_cb, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_root, root_event_cb, LV_EVENT_DRAW_POST, NULL);
     lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
@@ -1747,6 +1771,8 @@ bool crt_radar_show(bool on)
             s_frozen = false;
             lv_timer_pause(s_timer);
             lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
+            lv_disp_set_bg_opa(NULL, LV_OPA_COVER);
         }
         return true;
     }
@@ -1763,6 +1789,9 @@ bool crt_radar_show(bool on)
     s_beam_init = false;
     s_map_radius = -1;      /* rebuild the video map on the first tick */
     s_console_ms = 0;
+    /* nothing may paint under the scope (see root_event_cb) */
+    lv_obj_set_style_bg_opa(s_scr, LV_OPA_TRANSP, 0);
+    lv_disp_set_bg_opa(NULL, LV_OPA_TRANSP);
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_root);
     lv_obj_invalidate(s_root);
