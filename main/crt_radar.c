@@ -43,9 +43,11 @@ static const char *TAG = "crt";
 #define LIST_N      12
 
 /* ---- timing ---- */
-#define REV_MS      4000         /* one antenna revolution */
-#define TICK_MS     66           /* ~15 frames per second */
-#define TRAIL_DEG   34
+#define REV_MS      5000         /* one antenna revolution, ASR-like */
+#define TICK_MS     90           /* ~11 frames per second */
+#define TRAIL_DEG   30
+#define HEAD_DEG    12           /* behind the beam: refreshed every frame */
+#define TAIL_CHUNKS 3            /* the rest of the trail, one chunk per frame */
 #define DEG_U(d)    ((uint32_t)((d) * 65536.0 / 360.0))
 #define RAIN_EVERY_MS   (5 * 60 * 1000)
 #define RAIN_RETRY_MS   (60 * 1000)
@@ -390,7 +392,7 @@ static void to_ascii(char *dst, size_t n, const char *src)
         { 0x104, 'A' }, { 0x105, 'a' }, { 0x106, 'C' }, { 0x107, 'c' }, { 0x118, 'E' },
         { 0x119, 'e' }, { 0x141, 'L' }, { 0x142, 'l' }, { 0x143, 'N' }, { 0x144, 'n' },
         { 0xD3, 'O' },  { 0xF3, 'o' },  { 0x15A, 'S' }, { 0x15B, 's' }, { 0x179, 'Z' },
-        { 0x17A, 'z' }, { 0x17B, 'Z' }, { 0x17C, 'z' }, { 0xB7, '.' },  { 0xB0, 'o' },
+        { 0x17A, 'z' }, { 0x17B, 'Z' }, { 0x17C, 'z' }, { 0xB7, '.' },
         { 0xE9, 'e' },  { 0xE1, 'a' },  { 0xED, 'i' },  { 0xFC, 'u' },  { 0xF6, 'o' },
         { 0xE4, 'a' },  { 0xDF, 's' },
     };
@@ -402,7 +404,7 @@ static void to_ascii(char *dst, size_t n, const char *src)
             dst[o++] = (char)c;
             continue;
         }
-        char r = '?';
+        char r = 0;          /* symbols and icons are dropped */
         for (size_t k = 0; k < sizeof(fold) / sizeof(fold[0]); k++) {
             if (fold[k].cp == c) {
                 r = fold[k].c;
@@ -412,7 +414,9 @@ static void to_ascii(char *dst, size_t n, const char *src)
         if (c == 0x2192) {      /* arrow */
             r = '>';
         }
-        dst[o++] = r;
+        if (r != 0) {
+            dst[o++] = r;
+        }
     }
     dst[o] = '\0';
 }
@@ -1338,9 +1342,14 @@ static void polar_point(uint32_t a, int radius, int *x, int *y)
  * Split per quadrant (inside one the arc is monotonic, so the corner points
  * bound it) and into radial bands: one box from the centre to the rim would
  * be close to twice the sector's real area. */
-static void invalidate_wedge(uint32_t from, uint32_t span)
+static void invalidate_wedge(uint32_t from, uint32_t span, bool fine)
 {
-    static const int band[] = { 0, 90, 160, 225, TUBE_R + 2 };
+    /* coarse bands for the narrow wedges keep the count of invalid areas
+     * well inside LVGL's 32 (beyond that it redraws the whole screen) */
+    static const int band_fine[] = { 0, 90, 160, 225, TUBE_R + 2 };
+    static const int band_coarse[] = { 0, 150, TUBE_R + 2, TUBE_R + 2, TUBE_R + 2 };
+    const int *band = fine ? band_fine : band_coarse;
+    const int nb = fine ? 4 : 2;
     uint32_t a = from & 0xFFFF;
     while (span > 0) {
         uint32_t q_end = (a / 16384u + 1u) * 16384u;
@@ -1348,7 +1357,7 @@ static void invalidate_wedge(uint32_t from, uint32_t span)
         if (seg > span) {
             seg = span;
         }
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < nb; k++) {
             int px[4], py[4];
             polar_point(a, band[k], &px[0], &py[0]);
             polar_point(a, band[k + 1], &px[1], &py[1]);
@@ -1542,7 +1551,13 @@ static void tick_cb(lv_timer_t *t)
         }
     }
 
-    invalidate_wedge(acc - DEG_U(TRAIL_DEG) - step - DEG_U(1), DEG_U(TRAIL_DEG) + step + DEG_U(2));
+    /* The beam and the bright start of the trail every frame; the end of the
+     * trail every frame too, so nothing is left glowing once it reaches the
+     * floor; the dim middle one chunk per frame in turn. */
+    invalidate_wedge(acc - DEG_U(HEAD_DEG) - step, DEG_U(HEAD_DEG) + step + DEG_U(1), true);
+    invalidate_wedge(acc - DEG_U(TRAIL_DEG) - step - DEG_U(1), step + DEG_U(2), false);
+    uint32_t cw = DEG_U(TRAIL_DEG - HEAD_DEG) / TAIL_CHUNKS;
+    invalidate_wedge(acc - DEG_U(TRAIL_DEG) + (s_ticks % TAIL_CHUNKS) * cw, cw + DEG_U(1), false);
 
     /* fading echoes outside the trail, within LVGL's invalid-area budget */
     lv_disp_t *disp = lv_disp_get_default();
