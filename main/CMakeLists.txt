@@ -49,6 +49,7 @@ idf_component_register(
         "tz.c"
         "weather.c"
         "ui.c"
+        "crt_radar.c"
         "ui_settings.c"
         "web_server.c"
         "font_pl_8.c"

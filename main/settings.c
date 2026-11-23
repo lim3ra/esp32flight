@@ -64,6 +64,7 @@ void settings_load(void)
     s_settings.tile_url[0] = '\0';
     s_settings.metric_units = false;
     s_settings.follow_mode = false;
+    s_settings.screen_mode = 0;
     memset(s_settings.fav_name, 0, sizeof(s_settings.fav_name));
 
     nvs_handle_t h;
@@ -185,6 +186,9 @@ void settings_load(void)
     if (nvs_get_u8(h, "follow", &b8) == ESP_OK) {
         s_settings.follow_mode = b8 != 0;
     }
+    if (nvs_get_u8(h, "scrmode", &b8) == ESP_OK && b8 <= 1) {
+        s_settings.screen_mode = b8;
+    }
     for (int f = 0; f < 3; f++) {
         char key[12], val[64] = "";
         snprintf(key, sizeof(key), "fav%d", f);
@@ -257,6 +261,7 @@ esp_err_t settings_save(void)
     nvs_set_str(h, "tileurl", s_settings.tile_url);
     nvs_set_u8(h, "metric", s_settings.metric_units ? 1 : 0);
     nvs_set_u8(h, "follow", s_settings.follow_mode ? 1 : 0);
+    nvs_set_u8(h, "scrmode", s_settings.screen_mode);
     for (int f = 0; f < 3; f++) {
         char key[12], val[64];
         snprintf(key, sizeof(key), "fav%d", f);

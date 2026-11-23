@@ -101,6 +101,22 @@ void runways_draw(uint16_t *fb, int w, int h, const tile_view_t *view)
     }
 }
 
+int runways_count(void)
+{
+    if (s_count < 0) {
+        load();
+    }
+    return s_count;
+}
+
+void runways_get(int idx, float *le_lat, float *le_lon, float *he_lat, float *he_lon)
+{
+    *le_lat = s_rw[idx].le_lat;
+    *le_lon = s_rw[idx].le_lon;
+    *he_lat = s_rw[idx].he_lat;
+    *he_lon = s_rw[idx].he_lon;
+}
+
 static float ang_diff(float a, float b)
 {
     float d = fmodf(a - b + 540.0f, 360.0f) - 180.0f;

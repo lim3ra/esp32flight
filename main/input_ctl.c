@@ -185,7 +185,7 @@ bool input_ctl_dispatch(const char *action)
     }
     /* UI-owned actions run under the LVGL lock */
     static const char *k_ui[] = { "next_ac", "prev_ac",
-                                  "zoom_in", "zoom_out", "wake" };
+                                  "zoom_in", "zoom_out", "wake", "screen" };
     for (size_t i = 0; i < sizeof(k_ui) / sizeof(k_ui[0]); i++) {
         if (strcmp(action, k_ui[i]) == 0) {
             bool ok = false;

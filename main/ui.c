@@ -31,6 +31,7 @@
 #include "tz.h"
 #include "ui_settings.h"
 #include "mqtt_pub.h"
+#include "crt_radar.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -120,11 +121,12 @@ static int s_list_plane_rows;    /* rows currently showing aircraft */
 static int s_row_plane_idx[MAX_SHOWN];   /* row -> s_shown index */
 
 /* Right-panel view modes */
-/* 7B edition: the local map is the only panel. The view machinery is kept
- * as a single case rather than removed outright so the mode button, the
- * auto-cycle timer and ui_set_view() keep their existing shapes. */
+/* 7B edition: the local map, or the full-screen CRT radar scope
+ * (crt_radar.c). The scope replaces the whole screen, header included. */
 #define VIEW_RADAR  0
-#define VIEW_COUNT  1
+#define VIEW_CRT    1
+#define VIEW_COUNT  2
+static lv_obj_t *s_header;
 #define CYCLE_MS    6000
 static int        s_view_mode;
 static lv_timer_t *s_cycle_timer;
@@ -259,6 +261,7 @@ void ui_set_home(double lat, double lon)
     s_home_lat = lat;
     s_home_lon = lon;
     s_home_ok = true;
+    crt_radar_set_home(lat, lon);
     ESP_LOGI("ui", "home set: %.4f, %.4f", lat, lon);
 }
 
@@ -397,17 +400,62 @@ static void cycle_timer_cb(lv_timer_t *t)
 }
 
 
+static void set_hidden(lv_obj_t *o, bool hidden)
+{
+    if (hidden) {
+        lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void apply_view(int mode)
 {
-    s_view_mode = mode % VIEW_COUNT;
-    lv_obj_clear_flag(s_radar_panel, LV_OBJ_FLAG_HIDDEN);
+    mode = (mode < 0 ? 0 : mode) % VIEW_COUNT;
+    if (mode == VIEW_CRT && !crt_radar_show(true)) {
+        ui_toast("Radar: not enough memory");
+        mode = VIEW_RADAR;
+    }
+    s_view_mode = mode;
+    bool crt = mode == VIEW_CRT;
+    if (!crt) {
+        crt_radar_show(false);
+    }
+    /* hidden objects drop their invalidations, so the map's updates do not
+     * cost scope redraws while the scope is up */
+    set_hidden(s_header, crt);
+    set_hidden(s_list_panel, crt);
+    set_hidden(s_radar_panel, crt);
+    if (crt) {
+        lv_timer_pause(s_cycle_timer);
+        return;
+    }
     lv_timer_resume(s_cycle_timer);
     lv_timer_reset(s_cycle_timer);
     render_right();
 }
 
+/* The on-screen switch: change the view and remember it across reboots. */
+static void switch_screen(int mode)
+{
+    apply_view(mode);
+    settings_t *cfg = settings_get();
+    if (cfg->screen_mode != (uint8_t)s_view_mode) {
+        cfg->screen_mode = (uint8_t)s_view_mode;
+        settings_save();
+    }
+}
 
+static void crt_exit_cb(void)
+{
+    switch_screen(VIEW_RADAR);
+}
 
+static void crt_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    switch_screen(VIEW_CRT);
+}
 
 void ui_set_view(int mode)
 {
@@ -492,6 +540,7 @@ static void build_header(lv_obj_t *scr)
     lv_obj_t *hdr = make_panel(scr);
     lv_obj_set_size(hdr, SCR_W, HEADER_H);
     lv_obj_set_pos(hdr, 0, 0);
+    s_header = hdr;
 
     s_weather_label = make_label(hdr, UIFONT(&font_pl_20, &font_pl_12), COL_ACCENT);
     lv_obj_set_width(s_weather_label, UISX(340));
@@ -509,7 +558,7 @@ static void build_header(lv_obj_t *scr)
     lv_obj_set_width(s_status_label, UISX(230));
     lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(s_status_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, -UISX(122), 0);
+    lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, -UISX(184), 0);
     lv_label_set_text(s_status_label, "...");
 
     lv_obj_t *gear = lv_btn_create(hdr);
@@ -520,6 +569,18 @@ static void build_header(lv_obj_t *scr)
     s_gear_label = make_label(gear, UIFONT(&lv_font_montserrat_16, &lv_font_montserrat_10), COL_TEXT);
     lv_label_set_text(s_gear_label, LV_SYMBOL_SETTINGS);
     lv_obj_center(s_gear_label);
+
+    /* the screen switch: the scope has a MAP key to come back */
+    lv_obj_t *crt = lv_btn_create(hdr);
+    lv_obj_set_size(crt, UISX(64), UISY(36));
+    lv_obj_align(crt, LV_ALIGN_RIGHT_MID, -UISX(66), 0);
+    lv_obj_set_style_bg_color(crt, lv_color_hex(0x0f2a14), 0);
+    lv_obj_set_style_border_width(crt, 1, 0);
+    lv_obj_set_style_border_color(crt, lv_color_hex(0x2f9a3e), 0);
+    lv_obj_add_event_cb(crt, crt_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *crt_lbl = make_label(crt, UIFONT(&font_pl_14, &font_pl_8), lv_color_hex(0x6cf06a));
+    lv_label_set_text(crt_lbl, "RADAR");
+    lv_obj_center(crt_lbl);
 
 }
 
@@ -1268,6 +1329,9 @@ static void airport_timer_cb(lv_timer_t *t)
         label_set_if_changed(s_apt_arr, "");
         label_set_if_changed(s_apt_dep, "");
     }
+    crt_radar_set_airport(s_apt_level, lv_label_get_text(s_apt_chip_lbl),
+                          lv_label_get_text(s_apt_wx), lv_label_get_text(s_apt_arr),
+                          lv_label_get_text(s_apt_dep));
 }
 
 static void build_airport_bar(lv_obj_t *parent)
@@ -1924,7 +1988,8 @@ void ui_init(void)
     lv_timer_create(ticker_timer_cb, TICKER_ROTATE_MS, NULL);
     lv_timer_create(airport_timer_cb, APT_TICK_MS, NULL);
 
-    apply_view(VIEW_RADAR);
+    crt_radar_init(scr, crt_exit_cb);
+    apply_view(settings_get()->screen_mode == 1 ? VIEW_CRT : VIEW_RADAR);
 }
 
 static bool s_update_avail;
@@ -1992,6 +2057,7 @@ void ui_set_status(const char *text)
 void ui_set_weather(const char *text)
 {
     strlcpy(s_weather_txt, text, sizeof(s_weather_txt));
+    crt_radar_set_weather(text);
     if (s_weather_label != NULL) {
         lv_label_set_text(s_weather_label, text);
     }
@@ -2100,6 +2166,7 @@ void ui_update(const aircraft_list_t *list)
         strlcpy(s_selected_hex, s_shown[0].ac.hex, sizeof(s_selected_hex));
     }
 
+    crt_radar_set_targets(list);
     render_list_rows();
     render_list_selection();
     render_right();
@@ -2262,6 +2329,10 @@ bool ui_input_action(const char *a)
         if (z > 0.95 && z < 1.06) z = 1.0;
         s_radar_zoom = z;
         radar_tiles_want();
+        return true;
+    }
+    if (strcmp(a, "screen") == 0) {
+        switch_screen(s_view_mode == VIEW_CRT ? VIEW_RADAR : VIEW_CRT);
         return true;
     }
     if (strcmp(a, "wake") == 0) {

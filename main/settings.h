@@ -53,6 +53,7 @@ typedef struct {
     char    fav_name[3][24];  /* favorite locations, empty name = free slot */
     double  fav_lat[3], fav_lon[3];
     bool    map_light;        /* lift dark map tiles for readability (#10) */
+    uint8_t screen_mode;      /* 0 = map, 1 = CRT radar scope */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at
