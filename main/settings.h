@@ -54,6 +54,7 @@ typedef struct {
     double  fav_lat[3], fav_lon[3];
     bool    map_light;        /* lift dark map tiles for readability (#10) */
     uint8_t screen_mode;      /* 0 = map, 1 = CRT radar scope */
+    uint8_t screen_rotate_min; /* alternate map and radar every N min, 0 = off */
 } settings_t;
 
 /* Load from NVS (menuconfig values as first-boot defaults). Call once at

@@ -23,6 +23,7 @@
 #include "input_ctl.h"
 #include "airports.h"
 #include "ui.h"
+#include "crt_radar.h"
 #include "ui_settings.h"
 #include "flight_model.h"
 #include "waveshare_rgb_lcd_port.h"
@@ -208,6 +209,8 @@ static const char INDEX_HTML[] =
 "<div><label>Temperature</label><select id='c_temp_f'><option value='0'>\u00b0C</option><option value='1'>\u00b0F</option></select></div>"
 "<div><label>Auto-cycle flights</label><select id='c_follow_mode'><option value='0'>on (default)</option><option value='1'>off, follow selection</option></select>"
 "<div class='help'>Off keeps the selected flight on screen until you pick another one.</div></div>"
+"<div><label>Map / radar rotation</label><select id='c_screen_rotate_min'><option value='0'>off</option><option value='1'>every 1 min</option><option value='2'>every 2 min</option><option value='5'>every 5 min</option><option value='10'>every 10 min</option><option value='15'>every 15 min</option><option value='30'>every 30 min</option></select>"
+"<div class='help'>Alternates the map and the CRT radar screen. Also on the device: hold the RADAR button, or the AUTO key on the radar.</div></div>"
 
 "<div class='help'>Backlight turns off during the quiet hours below once the screen has been idle a minute; a tap wakes it.</div></div>"
 "<div><label>Night from</label><input id='c_night_start' type='time'></div>"
@@ -484,6 +487,7 @@ static const char INDEX_HTML[] =
 "c.local_adsb_use=document.getElementById('c_local_adsb_use').value==='1';"
 "c.airspace_enabled=document.getElementById('c_airspace_enabled').value==='1';"
 "['metric_units','follow_mode','temp_f'].forEach(k=>c[k]=document.getElementById('c_'+k).value==='1');"
+"c.screen_rotate_min=+document.getElementById('c_screen_rotate_min').value;"
 "c.favs=favs.map(f=>f&&f.name?f:{name:'',lat:0,lon:0});"
 "const num=v=>parseFloat(String(v).replace(',','.'));"
 "const la=num(document.getElementById('c_lat').value),lo=num(document.getElementById('c_lon').value);"
@@ -644,6 +648,7 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
     cJSON_AddBoolToObject(root, "follow_mode", c->follow_mode);
+    cJSON_AddNumberToObject(root, "screen_rotate_min", c->screen_rotate_min);
     cJSON *jf = cJSON_AddArrayToObject(root, "favs");
     for (int f = 0; f < 3; f++) {
         cJSON *e = cJSON_CreateObject();
@@ -715,6 +720,7 @@ static esp_err_t backup_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "metric_units", c->metric_units);
     cJSON_AddBoolToObject(root, "temp_f", c->temp_f);
     cJSON_AddBoolToObject(root, "follow_mode", c->follow_mode);
+    cJSON_AddNumberToObject(root, "screen_rotate_min", c->screen_rotate_min);
     cJSON *favs = cJSON_AddArrayToObject(root, "favs");
     for (int f = 0; f < 3; f++) {
         cJSON *e = cJSON_CreateObject();
@@ -830,6 +836,10 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     if (cJSON_IsBool((j = cJSON_GetObjectItem(root, "follow_mode")))) {
         c->follow_mode = cJSON_IsTrue(j);
+    }
+    if (cJSON_IsNumber((j = cJSON_GetObjectItem(root, "screen_rotate_min"))) &&
+        j->valueint >= 0 && j->valueint <= 120) {
+        c->screen_rotate_min = (uint8_t)j->valueint;
     }
     const cJSON *jfav = cJSON_GetObjectItem(root, "favs");
     if (cJSON_IsArray(jfav)) {
@@ -973,7 +983,9 @@ static esp_err_t view_get(httpd_req_t *req)
         httpd_query_key_value(q, "m", val, sizeof(val)) == ESP_OK) {
         int m = atoi(val);
         if (lvgl_port_lock(1000)) {
-            if (m == 30) {
+            if (m == 40 || m == 41) {
+                crt_radar_freeze(m == 40);   /* screenshot helper */
+            } else if (m == 30) {
                 ui_set_update_available(true, "v9.9.9");   /* test helper */
             } else if (m >= 20 && m <= 24) {
                 ui_settings_show_tab(m - 20);   /* screenshot helper */

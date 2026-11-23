@@ -127,6 +127,7 @@ static int s_row_plane_idx[MAX_SHOWN];   /* row -> s_shown index */
 #define VIEW_CRT    1
 #define VIEW_COUNT  2
 static lv_obj_t *s_header;
+static int64_t   s_view_since_ms;   /* last view change, for the auto rotation */
 #define CYCLE_MS    6000
 static int        s_view_mode;
 static lv_timer_t *s_cycle_timer;
@@ -417,6 +418,7 @@ static void apply_view(int mode)
         mode = VIEW_RADAR;
     }
     s_view_mode = mode;
+    s_view_since_ms = esp_timer_get_time() / 1000;
     bool crt = mode == VIEW_CRT;
     if (!crt) {
         crt_radar_show(false);
@@ -453,8 +455,36 @@ static void crt_exit_cb(void)
 
 static void crt_btn_cb(lv_event_t *e)
 {
-    (void)e;
+    if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+        crt_radar_cycle_rotation();
+        uint8_t m = settings_get()->screen_rotate_min;
+        char t[40];
+        if (m) {
+            snprintf(t, sizeof(t), "Auto map/radar: every %d min", m);
+        } else {
+            snprintf(t, sizeof(t), "Auto map/radar: off");
+        }
+        ui_toast(t);
+        s_view_since_ms = esp_timer_get_time() / 1000;
+        return;
+    }
     switch_screen(VIEW_CRT);
+}
+
+/* Automatic rotation: alternate the views every N minutes. Not saved as the
+ * chosen screen, so the flash is not written every few minutes; any manual
+ * switch restarts the interval. */
+static void rotate_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    uint8_t m = settings_get()->screen_rotate_min;
+    if (m == 0) {
+        return;
+    }
+    int64_t now = esp_timer_get_time() / 1000;
+    if (now - s_view_since_ms >= (int64_t)m * 60000) {
+        apply_view(s_view_mode == VIEW_CRT ? VIEW_RADAR : VIEW_CRT);
+    }
 }
 
 void ui_set_view(int mode)
@@ -577,7 +607,8 @@ static void build_header(lv_obj_t *scr)
     lv_obj_set_style_bg_color(crt, lv_color_hex(0x0f2a14), 0);
     lv_obj_set_style_border_width(crt, 1, 0);
     lv_obj_set_style_border_color(crt, lv_color_hex(0x2f9a3e), 0);
-    lv_obj_add_event_cb(crt, crt_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(crt, crt_btn_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(crt, crt_btn_cb, LV_EVENT_LONG_PRESSED, NULL);
     lv_obj_t *crt_lbl = make_label(crt, UIFONT(&font_pl_14, &font_pl_8), lv_color_hex(0x6cf06a));
     lv_label_set_text(crt_lbl, "RADAR");
     lv_obj_center(crt_lbl);
@@ -1989,6 +2020,7 @@ void ui_init(void)
     lv_timer_create(airport_timer_cb, APT_TICK_MS, NULL);
 
     crt_radar_init(scr, crt_exit_cb);
+    lv_timer_create(rotate_timer_cb, 5000, NULL);
     apply_view(settings_get()->screen_mode == 1 ? VIEW_CRT : VIEW_RADAR);
 }
 

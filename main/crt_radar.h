@@ -28,6 +28,13 @@ void crt_radar_init(lv_obj_t *scr, crt_radar_exit_cb_t on_exit);
 bool crt_radar_show(bool on);
 bool crt_radar_active(void);
 
+/* Stop the beam so a banded /screen.bmp reads one coherent frame. */
+void crt_radar_freeze(bool frozen);
+
+/* Step the automatic map/radar rotation: off, 1, 2, 5, 10, 15, 30 min.
+ * Saves the setting; the rotation itself runs in ui.c. */
+void crt_radar_cycle_rotation(void);
+
 void crt_radar_set_home(double lat, double lon);
 void crt_radar_set_targets(const aircraft_list_t *list);
 void crt_radar_set_weather(const char *text);
