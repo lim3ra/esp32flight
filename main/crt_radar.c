@@ -46,8 +46,8 @@ static const char *TAG = "crt";
 #define REV_MS      5000         /* one antenna revolution, ASR-like */
 #define TICK_MS     90           /* ~11 frames per second */
 #define TRAIL_DEG   30
-#define HEAD_DEG    12           /* behind the beam: refreshed every frame */
-#define TAIL_CHUNKS 3            /* the rest of the trail, one chunk per frame */
+#define FORCE_N     40           /* forced-repaint rectangles in flight */
+#define FORCE_TICKS 4            /* frames a forced rectangle stays forced */
 #define DEG_U(d)    ((uint32_t)((d) * 65536.0 / 360.0))
 #define RAIN_EVERY_MS   (5 * 60 * 1000)
 #define RAIN_RETRY_MS   (60 * 1000)
@@ -133,6 +133,12 @@ static char     s_list_hex[LIST_N][ICAO_HEX_LEN];
 static int64_t  s_console_ms;
 static uint32_t s_draw_us, s_draw_px, s_ticks;
 static char     s_frame_stat[40] = "";
+static uint32_t s_tickno;        /* monotonic frame counter */
+static uint32_t s_active_u;      /* beam distance still being repainted */
+static int      s_full_ticks;
+static int      s_nforce;
+static struct { lv_area_t a; uint32_t tick; } s_force[FORCE_N];
+static uint8_t *s_must;          /* per-row repaint mask */
 
 static volatile bool s_rain_busy;
 static int64_t  s_rain_ms = -RAIN_EVERY_MS;
@@ -323,7 +329,7 @@ static bool ensure_mem(void)
      * miss on nearly every random lookup. */
     const size_t small_n = (TUBE_R + 1) * 2 + K_MAIN * K_MAIN + K_SMALL * K_SMALL +
                            K_RING * K_RING + 256 + 95 * 8 + 16;
-    const size_t hot_n = 512 * 2 + 512 + ((TUBE_R * TUBE_R >> 8) + 1) + 1024 + SCOPE_D + 4 + 8;
+    const size_t hot_n = 512 * 2 + 512 + ((TUBE_R * TUBE_R >> 8) + 1) + 1024 + SCOPE_D * 2 + 4 + 8;
     s_qang = ps_alloc((size_t)QW * QW * 2);
     s_map = ps_alloc((size_t)SCOPE_D * SCOPE_D / 4);
     s_rain = ps_alloc((size_t)RAIN_D * RAIN_D);
@@ -354,6 +360,7 @@ static bool ensure_mem(void)
     s_vig = h;                       h += (TUBE_R * TUBE_R >> 8) + 1;
     s_noise = h;                     h += 1024;
     s_row = h;                       h += SCOPE_D;
+    s_must = h;                      h += SCOPE_D;
     s_map_i = h;
     s_map_i[1] = 40;
     s_map_i[2] = 70;
@@ -775,13 +782,39 @@ static void blip_box(const blip_t *b, lv_area_t *a, bool with_hist)
     }
 }
 
-static void inval_scope(const lv_area_t *sa)
+static void inval_area(const lv_area_t *sa)
 {
     lv_area_t a = {
         .x1 = s_scope->coords.x1 + sa->x1, .y1 = s_scope->coords.y1 + sa->y1,
         .x2 = s_scope->coords.x1 + sa->x2, .y2 = s_scope->coords.y1 + sa->y2,
     };
     lv_obj_invalidate_area(s_scope, &a);
+}
+
+/* Redraw everything for a few frames (both frame buffers get it). */
+static void force_full(void)
+{
+    s_full_ticks = FORCE_TICKS;
+    s_nforce = 0;
+    lv_obj_invalidate(s_scope);
+}
+
+/* Invalidate a rectangle whose every pixel must be repainted. The sector
+ * sweep instead repaints only pixels near the beam (see compose_span), so
+ * anything else that changes - echoes, tags, a fading dot - goes through
+ * here and is remembered long enough to reach both frame buffers. */
+static void inval_scope(const lv_area_t *sa)
+{
+    if (s_full_ticks == 0) {
+        if (s_nforce == FORCE_N) {
+            force_full();
+            return;
+        }
+        s_force[s_nforce].a = *sa;
+        s_force[s_nforce].tick = s_tickno;
+        s_nforce++;
+    }
+    inval_area(sa);
 }
 
 static void inval_blip(const blip_t *b, bool with_hist)
@@ -987,9 +1020,43 @@ static void stamp_blip(const blip_t *b, int64_t now, int sy, int x0, int x1, uin
     }
 }
 
-static void compose_span(int sy, int x0, int x1, uint16_t *dst,
-                         const uint8_t *bl, int nbl, int64_t now)
+static void mark_must(uint8_t *must, int sy, int x0, int x1, const lv_area_t *r)
 {
+    if (sy < r->y1 || sy > r->y2) {
+        return;
+    }
+    int a = LV_MAX(x0, r->x1), b = LV_MIN(x1, r->x2);
+    if (a <= b) {
+        memset(must + (a - x0), 1, (size_t)(b - a + 1));
+    }
+}
+
+/* One row of the scope. In LVGL's double-buffered direct mode the buffer
+ * being drawn still holds the frame from two refreshes ago, so a pixel whose
+ * value has not changed since then can be left alone: away from the beam the
+ * phosphor sits at its floor and only the bearing test is paid, not the
+ * composition or the PSRAM write. Pixels near the beam, inside echo or tag
+ * boxes, inside forced rectangles, or all of them after a full invalidation,
+ * are painted. */
+static void compose_span(int sy, int x0, int x1, uint16_t *dst,
+                         const uint8_t *bl, int nbl, const uint8_t *fr, int nfr,
+                         bool full, int64_t now)
+{
+    uint8_t *must = s_must;
+    if (full) {
+        memset(must, 1, (size_t)(x1 - x0 + 1));
+    } else {
+        memset(must, 0, (size_t)(x1 - x0 + 1));
+        for (int k = 0; k < nbl; k++) {
+            lv_area_t bb;
+            blip_box(&s_blips[bl[k]], &bb, true);
+            mark_must(must, sy, x0, x1, &bb);
+        }
+        for (int k = 0; k < nfr; k++) {
+            mark_must(must, sy, x0, x1, &s_force[fr[k]].a);
+        }
+    }
+    const uint32_t active_u = s_active_u;
     const int dy = sy - SCOPE_C;
     const int ady = dy < 0 ? -dy : dy;
     const bool odd = (sy + SCOPE_Y) & 1;
@@ -1016,7 +1083,14 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
             b = dy > 0 ? 32768u + a : 65536u - a;
         }
         b &= 0xFFFF;
-        uint32_t g = s_glow[((beam - b) & 0xFFFF) >> 7];
+        uint32_t d = (beam - b) & 0xFFFF;
+        if (!must[x - x0]) {
+            if (d >= active_u && d < 0xFFFF - DEG_U(2)) {
+                continue;
+            }
+            must[x - x0] = 1;
+        }
+        uint32_t g = s_glow[d >> 7];
         uint32_t v;
         if (g == 255) {
             v = 255;
@@ -1073,6 +1147,9 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
     const int r_edge = (TUBE_R + 9) * (TUBE_R + 9);
 
     for (int x = x0; x <= x1; x++) {
+        if (!must[x - x0]) {
+            continue;
+        }
         int dx = x - SCOPE_C;
         int r2 = dx * dx + dy * dy;
         uint16_t c;
@@ -1151,12 +1228,21 @@ static void scope_event_cb(lv_event_t *e)
                 bl[nbl++] = (uint8_t)i;
             }
         }
+        uint8_t fr[FORCE_N];
+        int nfr = 0;
+        for (int i = 0; i < s_nforce; i++) {
+            const lv_area_t *f = &s_force[i].a;
+            if (f->x1 <= sa.x2 && f->x2 >= sa.x1 && f->y1 <= sa.y2 && f->y2 >= sa.y1) {
+                fr[nfr++] = (uint8_t)i;
+            }
+        }
+        bool full = s_full_ticks > 0 || !s_active;
         int stride = lv_area_get_width(dc->buf_area);
         int64_t now = now_ms();
         for (int y = a.y1; y <= a.y2; y++) {
             lv_color_t *row = (lv_color_t *)dc->buf +
                               (size_t)(y - dc->buf_area->y1) * stride + (a.x1 - dc->buf_area->x1);
-            compose_span(y - oy, sa.x1, sa.x2, (uint16_t *)row, bl, nbl, now);
+            compose_span(y - oy, sa.x1, sa.x2, (uint16_t *)row, bl, nbl, fr, nfr, full, now);
         }
         s_draw_us += (uint32_t)(esp_timer_get_time() - t0);
         s_draw_px += (uint32_t)lv_area_get_size(&a);
@@ -1374,7 +1460,7 @@ static void invalidate_wedge(uint32_t from, uint32_t span, bool fine)
             r.y1 -= 2;
             r.x2 += 2;
             r.y2 += 2;
-            inval_scope(&r);
+            inval_area(&r);
         }
         a = (a + seg) & 0xFFFF;
         span -= seg;
@@ -1517,6 +1603,20 @@ static void tick_cb(lv_timer_t *t)
     s_beam_init = true;
     s_beam_acc = acc;
     s_ticks++;
+    s_tickno++;
+    if (s_full_ticks > 0) {
+        s_full_ticks--;
+    }
+    int keep = 0;
+    for (int i = 0; i < s_nforce; i++) {
+        if (s_tickno - s_force[i].tick <= FORCE_TICKS) {
+            s_force[keep++] = s_force[i];
+        }
+    }
+    s_nforce = keep;
+    /* everything the last frames painted near the beam is still settling in
+     * one of the two buffers: trail, plus three steps, plus margin */
+    s_active_u = DEG_U(TRAIL_DEG + 2) + 3 * step;
 
     /* video map follows the range, the location and late airspace data */
     if (s_home_ok && (settings_get()->radius_nm != s_map_radius || s_map_lat != s_home_lat ||
@@ -1529,7 +1629,7 @@ static void tick_cb(lv_timer_t *t)
                 s_blips[i].tw = 0;
             }
         }
-        lv_obj_invalidate(s_scope);
+        force_full();
     }
 
     for (int i = 0; i < MAX_AIRCRAFT; i++) {
@@ -1551,13 +1651,8 @@ static void tick_cb(lv_timer_t *t)
         }
     }
 
-    /* The beam and the bright start of the trail every frame; the end of the
-     * trail every frame too, so nothing is left glowing once it reaches the
-     * floor; the dim middle one chunk per frame in turn. */
-    invalidate_wedge(acc - DEG_U(HEAD_DEG) - step, DEG_U(HEAD_DEG) + step + DEG_U(1), true);
-    invalidate_wedge(acc - DEG_U(TRAIL_DEG) - step - DEG_U(1), step + DEG_U(2), false);
-    uint32_t cw = DEG_U(TRAIL_DEG - HEAD_DEG) / TAIL_CHUNKS;
-    invalidate_wedge(acc - DEG_U(TRAIL_DEG) + (s_ticks % TAIL_CHUNKS) * cw, cw + DEG_U(1), false);
+    /* loose boxes are fine: pixels away from the beam cost a bearing test */
+    invalidate_wedge(acc - s_active_u, s_active_u + DEG_U(2), true);
 
     /* fading echoes outside the trail, within LVGL's invalid-area budget */
     lv_disp_t *disp = lv_disp_get_default();
@@ -1671,6 +1766,8 @@ bool crt_radar_show(bool on)
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_root);
     lv_obj_invalidate(s_root);
+    s_full_ticks = FORCE_TICKS;
+    s_nforce = 0;
     lv_timer_resume(s_timer);
     return true;
 }
