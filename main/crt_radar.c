@@ -45,7 +45,7 @@ static const char *TAG = "crt";
 /* ---- timing ---- */
 #define REV_MS      4000         /* one antenna revolution */
 #define TICK_MS     66           /* ~15 frames per second */
-#define TRAIL_DEG   45
+#define TRAIL_DEG   34
 #define DEG_U(d)    ((uint32_t)((d) * 65536.0 / 360.0))
 #define RAIN_EVERY_MS   (5 * 60 * 1000)
 #define RAIN_RETRY_MS   (60 * 1000)
@@ -109,6 +109,7 @@ static int16_t  *s_hw;       /* tube half width per |dy| */
 static uint8_t  *s_kmain, *s_ksmall, *s_kring;
 static uint8_t  *s_decay;    /* blip intensity by age / 40 ms */
 static uint8_t  *s_glyph;    /* 95 x 8 rows, ASCII 32..126 from unscii 8 */
+static uint8_t  *s_noise;    /* 64 x 64 white noise, shifted per revolution */
 static blip_t   *s_blips;
 static term_row_t *s_term;
 static const uint8_t s_map_i[4] = { 0, 40, 70, 118 };
@@ -129,7 +130,7 @@ static char     s_sel_hex[ICAO_HEX_LEN];
 static char     s_list_hex[LIST_N][ICAO_HEX_LEN];
 static int64_t  s_console_ms;
 static uint32_t s_draw_us, s_draw_px, s_ticks;
-static char     s_frame_stat[24] = "";
+static char     s_frame_stat[40] = "";
 
 static volatile bool s_rain_busy;
 static int64_t  s_rain_ms = -RAIN_EVERY_MS;
@@ -316,7 +317,7 @@ static bool ensure_mem(void)
     }
     const size_t small_n = 512 * 2 + (TUBE_R + 1) * 2 + SCOPE_D + 1024 +
                            ((TUBE_R * TUBE_R >> 7) + 1) + K_MAIN * K_MAIN +
-                           K_SMALL * K_SMALL + K_RING * K_RING + 256 + 95 * 8 + 16;
+                           K_SMALL * K_SMALL + K_RING * K_RING + 256 + 95 * 8 + 4096 + 16;
     s_qang = ps_alloc((size_t)QW * QW * 2);
     s_map = ps_alloc((size_t)SCOPE_D * SCOPE_D / 4);
     s_rain = ps_alloc((size_t)RAIN_D * RAIN_D);
@@ -349,7 +350,11 @@ static bool ensure_mem(void)
     s_ksmall = p;                    p += K_SMALL * K_SMALL;
     s_kring = p;                     p += K_RING * K_RING;
     s_decay = p;                     p += 256;
-    s_glyph = p;
+    s_glyph = p;                     p += 95 * 8;
+    s_noise = p;
+    for (int i = 0; i < 4096; i++) {
+        s_noise[i] = (uint8_t)(hash3((uint32_t)i, 0x9e37u, 0x79b9u) >> 24);
+    }
     build_palette();
     build_glyphs();
     build_tables();
@@ -521,7 +526,7 @@ static void build_map(void)
     for (int nm = step; nm <= range; nm += step) {
         int r = (int)(nm * RANGE_R / (float)range + 0.5f);
         map_circle(r, 1);
-        char t[8];
+        char t[12];
         snprintf(t, sizeof(t), "%d", nm);
         float a = 0.30f;     /* label a little east of north */
         draw_text(t, SCOPE_C + (int)(r * sinf(a)) + 3, SCOPE_C - (int)(r * cosf(a)) - 17,
@@ -832,7 +837,13 @@ static void blip_place_tag(blip_t *b)
     bool sel = blip_selected(b);
     for (int k = 0; k < 4; k++) {
         int x = b->x + cand[k][0], y = b->y + cand[k][1];
-        if (x < 1 || y < 0 || x + w >= SCOPE_D || y + TAG_H > SCOPE_D) {
+        /* all four corners on the phosphor, not over the bezel */
+        bool inside = true;
+        for (int c = 0; c < 4 && inside; c++) {
+            int cx = (c & 1 ? x + w : x) - SCOPE_C, cy = (c & 2 ? y + TAG_H : y) - SCOPE_C;
+            inside = cx * cx + cy * cy < (TUBE_R - 6) * (TUBE_R - 6);
+        }
+        if (!inside) {
             continue;
         }
         if (!sel && tag_overlaps(b, x, y, w)) {
@@ -939,7 +950,8 @@ static void stamp_blip(const blip_t *b, int64_t now, int sy, int x0, int x1, uin
     if (b->tw > 0) {
         int ty = sy - b->ty;
         if (ty >= 0 && ty < TAG_H) {
-            uint32_t ti = sel ? 255 : LV_MAX(118, pw * 220 / 256);
+            /* constant, so a fading echo only repaints its own 13x13 dot */
+            uint32_t ti = sel ? 255 : 150;
             const uint8_t *bits = b->tag + ty * (TAG_W / 8);
             int xa = LV_MAX(x0, b->tx - 1), xb = LV_MIN(x1, b->tx + b->tw);
             for (int x = xa; x <= xb; x++) {
@@ -994,20 +1006,23 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
         if (g == 255) {
             v = 255;
         } else {
-            uint32_t h = hash3((uint32_t)x, (uint32_t)sy, (acc - b) >> 16);
+            /* noise is fixed for a pixel until the beam passes it again */
+            uint32_t rev = (acc - b) >> 16;
+            uint32_t n = s_noise[(((uint32_t)sy + rev * 23u) & 63u) * 64u +
+                                 (((uint32_t)x + rev * 41u) & 63u)];
             uint32_t persist = ECHO_FLOOR + ((g * (256 - ECHO_FLOOR)) >> 8);
             v = (g * TRAIL_WASH) >> 8;
             uint32_t e = rrow[x >> 1];
             if (e) {
-                e = (e * (130 + (h & 127))) >> 8;     /* grain */
+                e = (e * (130 + (n >> 1))) >> 8;      /* grain */
                 v += (e * persist) >> 8;
             }
-            if (((h >> 8) & 1023) < 5) {
-                v += 24 + (g >> 2);          /* receiver noise */
+            if (g && n == 255) {
+                v += 24 + (g >> 2);          /* receiver noise, in the trail */
             }
             int r2 = dx * dx + dy * dy;
             if (r2 < CLUTTER_R * CLUTTER_R) {
-                uint32_t c = ((h >> 20) & 127) * (uint32_t)(CLUTTER_R * CLUTTER_R - r2) /
+                uint32_t c = (n >> 1) * (uint32_t)(CLUTTER_R * CLUTTER_R - r2) /
                              (CLUTTER_R * CLUTTER_R);
                 v += (c * persist) >> 8;
             }
@@ -1301,18 +1316,20 @@ static void root_event_cb(lv_event_t *e)
 /* sector invalidation                                                 */
 /* ------------------------------------------------------------------ */
 
-static void edge_point(uint32_t a, int *x, int *y)
+static void polar_point(uint32_t a, int radius, int *x, int *y)
 {
     float r = a * (2.0f * (float)M_PI / 65536.0f);
-    *x = SCOPE_C + (int)lroundf((TUBE_R + 1) * sinf(r));
-    *y = SCOPE_C - (int)lroundf((TUBE_R + 1) * cosf(r));
+    *x = SCOPE_C + (int)lroundf(radius * sinf(r));
+    *y = SCOPE_C - (int)lroundf(radius * cosf(r));
 }
 
-/* Invalidate the wedge from angle `from` clockwise through `span` units, as
- * one rectangle per quadrant it touches: inside a quadrant the arc is
- * monotonic, so its ends and the centre bound it. */
+/* Invalidate the wedge from angle `from` clockwise through `span` units.
+ * Split per quadrant (inside one the arc is monotonic, so the corner points
+ * bound it) and into radial bands: one box from the centre to the rim would
+ * be close to twice the sector's real area. */
 static void invalidate_wedge(uint32_t from, uint32_t span)
 {
+    static const int band[] = { 0, 90, 160, 225, TUBE_R + 2 };
     uint32_t a = from & 0xFFFF;
     while (span > 0) {
         uint32_t q_end = (a / 16384u + 1u) * 16384u;
@@ -1320,14 +1337,25 @@ static void invalidate_wedge(uint32_t from, uint32_t span)
         if (seg > span) {
             seg = span;
         }
-        int xa, ya, xb, yb;
-        edge_point(a, &xa, &ya);
-        edge_point(a + seg, &xb, &yb);
-        lv_area_t r = {
-            .x1 = LV_MIN(SCOPE_C, LV_MIN(xa, xb)) - 2, .y1 = LV_MIN(SCOPE_C, LV_MIN(ya, yb)) - 2,
-            .x2 = LV_MAX(SCOPE_C, LV_MAX(xa, xb)) + 2, .y2 = LV_MAX(SCOPE_C, LV_MAX(ya, yb)) + 2,
-        };
-        inval_scope(&r);
+        for (int k = 0; k < 4; k++) {
+            int px[4], py[4];
+            polar_point(a, band[k], &px[0], &py[0]);
+            polar_point(a, band[k + 1], &px[1], &py[1]);
+            polar_point(a + seg, band[k], &px[2], &py[2]);
+            polar_point(a + seg, band[k + 1], &px[3], &py[3]);
+            lv_area_t r = { px[0], py[0], px[0], py[0] };
+            for (int i = 1; i < 4; i++) {
+                r.x1 = LV_MIN(r.x1, px[i]);
+                r.x2 = LV_MAX(r.x2, px[i]);
+                r.y1 = LV_MIN(r.y1, py[i]);
+                r.y2 = LV_MAX(r.y2, py[i]);
+            }
+            r.x1 -= 2;
+            r.y1 -= 2;
+            r.x2 += 2;
+            r.y2 += 2;
+            inval_scope(&r);
+        }
         a = (a + seg) & 0xFFFF;
         span -= seg;
     }
@@ -1519,15 +1547,18 @@ static void tick_cb(lv_timer_t *t)
                 break;
             }
             b->lvl = q;
-            inval_blip(b, false);
+            lv_area_t dot = { b->x - K_MAIN / 2, b->y - K_MAIN / 2,
+                              b->x + K_MAIN / 2, b->y + K_MAIN / 2 };
+            inval_scope(&dot);
             budget--;
         }
     }
 
     if (now - s_console_ms >= 1000) {
         if (s_ticks > 0 && s_console_ms > 0) {
-            snprintf(s_frame_stat, sizeof(s_frame_stat), "DRAW %u MS/F",
-                     (unsigned)(s_draw_us / s_ticks / 1000));
+            snprintf(s_frame_stat, sizeof(s_frame_stat), "DRAW %u MS %uK",
+                     (unsigned)(s_draw_us / s_ticks / 1000),
+                     (unsigned)(s_draw_px / s_ticks / 1000));
         }
         s_draw_us = s_draw_px = s_ticks = 0;
         s_console_ms = now;

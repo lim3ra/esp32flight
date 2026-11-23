@@ -64,6 +64,10 @@ idf_component_register(
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LV_LVGL_H_INCLUDE_SIMPLE=1)
 
+# The CRT scope composes every pixel of the beam sector each frame; at the
+# project-wide -Og that alone takes longer than a frame.
+set_source_files_properties(crt_radar.c PROPERTIES COMPILE_OPTIONS "-O2")
+
 idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
 target_compile_options(${lvgl_lib} PRIVATE -Wno-format)
 
