@@ -103,16 +103,16 @@ static uint8_t  *s_rain;     /* echo intensity, half resolution */
 static uint16_t *s_rain_tmp; /* RainViewer render, RGB565 */
 static uint8_t  *s_row;      /* one row of intensities */
 static uint16_t *s_pal;      /* [0..255] even rows, [256..511] scanline rows */
-static uint8_t  *s_glow;     /* 1024 steps of beam distance -> glow */
-static uint8_t  *s_vig;      /* vignette by r^2 >> 7 */
+static uint8_t  *s_glow;     /* 512 steps of beam distance -> glow */
+static uint8_t  *s_vig;      /* vignette by r^2 >> 8 */
 static int16_t  *s_hw;       /* tube half width per |dy| */
 static uint8_t  *s_kmain, *s_ksmall, *s_kring;
 static uint8_t  *s_decay;    /* blip intensity by age / 40 ms */
 static uint8_t  *s_glyph;    /* 95 x 8 rows, ASCII 32..126 from unscii 8 */
-static uint8_t  *s_noise;    /* 64 x 64 white noise, shifted per revolution */
+static uint8_t  *s_noise;    /* 32 x 32 white noise, shifted per revolution */
+static uint8_t  *s_map_i;    /* video map level -> intensity */
 static blip_t   *s_blips;
 static term_row_t *s_term;
-static const uint8_t s_map_i[4] = { 0, 40, 70, 118 };
 static const uint8_t s_hist_i[HIST_N] = { 84, 62, 44, 30, 18 };
 
 static lv_obj_t *s_root, *s_scope, *s_termobj;
@@ -252,20 +252,20 @@ static void build_tables(void)
             s_qang[ay * QW + ax] = (uint16_t)(a * 65536.0f / (2.0f * (float)M_PI) + 0.5f);
         }
     }
-    for (int i = 0; i < 1024; i++) {
-        float deg = i * 360.0f / 1024.0f;
+    for (int i = 0; i < 512; i++) {
+        float deg = i * 360.0f / 512.0f;
         int v = 0;
-        if (deg < 0.8f) {
+        if (deg < 0.5f) {
             v = 255;
         } else if (deg < TRAIL_DEG) {
-            float t = (deg - 0.8f) / (TRAIL_DEG - 0.8f);
+            float t = (deg - 0.7f) / (TRAIL_DEG - 0.7f);
             v = (int)(235.0f * (1.0f - t) * (1.0f - t));
         }
         s_glow[i] = (uint8_t)v;
     }
-    int vn = (TUBE_R * TUBE_R >> 7) + 1;
+    int vn = (TUBE_R * TUBE_R >> 8) + 1;
     for (int i = 0; i < vn; i++) {
-        float r = sqrtf((float)(i << 7)) / TUBE_R;
+        float r = sqrtf((float)(i << 8)) / TUBE_R;
         float f = 1.0f - 0.34f * powf(r, 2.5f);
         if (r > 0.985f) {
             f *= 0.6f;      /* soft tube edge */
@@ -315,9 +315,13 @@ static bool ensure_mem(void)
     if (s_mem_ok) {
         return true;
     }
-    const size_t small_n = 512 * 2 + (TUBE_R + 1) * 2 + SCOPE_D + 1024 +
-                           ((TUBE_R * TUBE_R >> 7) + 1) + K_MAIN * K_MAIN +
-                           K_SMALL * K_SMALL + K_RING * K_RING + 256 + 95 * 8 + 4096 + 16;
+    /* PSRAM for the bulky and the rarely touched; the per-pixel lookup
+     * tables live in internal RAM. On the 7B the bounce-buffer ISR streams
+     * the whole frame through the 32 KB data cache, so PSRAM-resident tables
+     * miss on nearly every random lookup. */
+    const size_t small_n = (TUBE_R + 1) * 2 + K_MAIN * K_MAIN + K_SMALL * K_SMALL +
+                           K_RING * K_RING + 256 + 95 * 8 + 16;
+    const size_t hot_n = 512 * 2 + 512 + ((TUBE_R * TUBE_R >> 8) + 1) + 1024 + SCOPE_D + 4 + 8;
     s_qang = ps_alloc((size_t)QW * QW * 2);
     s_map = ps_alloc((size_t)SCOPE_D * SCOPE_D / 4);
     s_rain = ps_alloc((size_t)RAIN_D * RAIN_D);
@@ -325,7 +329,9 @@ static bool ensure_mem(void)
     s_blips = ps_alloc(sizeof(blip_t) * MAX_AIRCRAFT);
     s_term = ps_alloc(sizeof(term_row_t) * TERM_ROWS);
     uint8_t *small = ps_alloc(small_n);
-    if (!s_qang || !s_map || !s_rain || !s_rain_tmp || !s_blips || !s_term || !small) {
+    uint8_t *hot = heap_caps_calloc(1, hot_n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_qang || !s_map || !s_rain || !s_rain_tmp || !s_blips || !s_term || !small || !hot) {
+        free(hot);
         free(s_qang);
         free(s_map);
         free(s_rain);
@@ -340,19 +346,24 @@ static bool ensure_mem(void)
         s_term = NULL;
         return false;
     }
+    uint8_t *h = hot;
+    s_pal = (uint16_t *)h;           h += 512 * 2;
+    s_glow = h;                      h += 512;
+    s_vig = h;                       h += (TUBE_R * TUBE_R >> 8) + 1;
+    s_noise = h;                     h += 1024;
+    s_row = h;                       h += SCOPE_D;
+    s_map_i = h;
+    s_map_i[1] = 40;
+    s_map_i[2] = 70;
+    s_map_i[3] = 118;
     uint8_t *p = small;
-    s_pal = (uint16_t *)p;           p += 512 * 2;
     s_hw = (int16_t *)p;             p += (TUBE_R + 1) * 2;
-    s_row = p;                       p += SCOPE_D;
-    s_glow = p;                      p += 1024;
-    s_vig = p;                       p += (TUBE_R * TUBE_R >> 7) + 1;
     s_kmain = p;                     p += K_MAIN * K_MAIN;
     s_ksmall = p;                    p += K_SMALL * K_SMALL;
     s_kring = p;                     p += K_RING * K_RING;
     s_decay = p;                     p += 256;
-    s_glyph = p;                     p += 95 * 8;
-    s_noise = p;
-    for (int i = 0; i < 4096; i++) {
+    s_glyph = p;
+    for (int i = 0; i < 1024; i++) {
         s_noise[i] = (uint8_t)(hash3((uint32_t)i, 0x9e37u, 0x79b9u) >> 24);
     }
     build_palette();
@@ -1001,15 +1012,15 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
             b = dy > 0 ? 32768u + a : 65536u - a;
         }
         b &= 0xFFFF;
-        uint32_t g = s_glow[((beam - b) & 0xFFFF) >> 6];
+        uint32_t g = s_glow[((beam - b) & 0xFFFF) >> 7];
         uint32_t v;
         if (g == 255) {
             v = 255;
         } else {
             /* noise is fixed for a pixel until the beam passes it again */
             uint32_t rev = (acc - b) >> 16;
-            uint32_t n = s_noise[(((uint32_t)sy + rev * 23u) & 63u) * 64u +
-                                 (((uint32_t)x + rev * 41u) & 63u)];
+            uint32_t n = s_noise[(((uint32_t)sy + rev * 23u) & 31u) * 32u +
+                                 (((uint32_t)x + rev * 41u) & 31u)];
             uint32_t persist = ECHO_FLOOR + ((g * (256 - ECHO_FLOOR)) >> 8);
             v = (g * TRAIL_WASH) >> 8;
             uint32_t e = rrow[x >> 1];
@@ -1062,7 +1073,7 @@ static void compose_span(int sy, int x0, int x1, uint16_t *dst,
         int r2 = dx * dx + dy * dy;
         uint16_t c;
         if (x >= tx0 && x <= tx1) {
-            c = pal[(I[x - x0] * s_vig[r2 >> 7]) >> 8];
+            c = pal[(I[x - x0] * s_vig[r2 >> 8]) >> 8];
         } else if (r2 <= r_gap) {
             c = c_gap;
         } else if (r2 <= r_ring) {
