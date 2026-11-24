@@ -35,6 +35,9 @@ void ui_set_home(double lat, double lon);
  * stores the text, and the bar picks it up on its own timer. */
 void ui_airport_feed(const char *data, int len);
 
+/* krk-airport/status JSON from the collector; any task, like the above. */
+void ui_collector_status(const char *data, int len);
+
 /* Replace displayed flight data. Routes are looked up via routes_get_cached
  * and snapshotted, so later touch interactions don't race the network task. */
 void ui_update(const aircraft_list_t *list);

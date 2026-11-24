@@ -34,6 +34,7 @@
 #include "crt_radar.h"
 #include "srcstat.h"
 #include "raingrid.h"
+#include "cJSON.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -130,6 +131,87 @@ static int s_row_plane_idx[MAX_SHOWN];   /* row -> s_shown index */
 #define VIEW_COUNT  2
 static lv_obj_t *s_header;
 static lv_obj_t *s_warn_label;      /* data source down, replaces the status */
+
+/* krk-airport-collector status (topic krk-airport/status, every 30 s) */
+static SemaphoreHandle_t s_apt_lock;      /* defined with the airport bar below */
+static void label_set_if_changed(lv_obj_t *l, const char *txt);
+#define COLL_MSG_MAX  2048
+#define COLL_STALE_US (120LL * 1000 * 1000)
+static lv_obj_t *s_coll_chip, *s_coll_lbl;
+static char     *s_coll_msg;          /* PSRAM, raw JSON from the MQTT task */
+static volatile bool s_coll_new;
+static int64_t   s_coll_us;           /* arrival, 0 = never */
+static int       s_coll_level = -1;
+static char      s_coll_summary[64] = "no status yet";
+
+void ui_collector_status(const char *data, int len)
+{
+    if (s_coll_msg == NULL || s_apt_lock == NULL || len <= 0 || len >= COLL_MSG_MAX) {
+        return;
+    }
+    if (xSemaphoreTake(s_apt_lock, pdMS_TO_TICKS(200)) == pdTRUE) {
+        memcpy(s_coll_msg, data, (size_t)len);
+        s_coll_msg[len] = '\0';
+        s_coll_new = true;
+        s_coll_us = esp_timer_get_time();
+        xSemaphoreGive(s_apt_lock);
+    }
+}
+
+static void coll_chip_cb(lv_event_t *e)
+{
+    (void)e;
+    char t[96];
+    snprintf(t, sizeof(t), "Collector: %s", s_coll_summary);
+    ui_toast(t);
+}
+
+/* Header chip from the last status; DOWN once nothing came for 2 minutes. */
+static void coll_render(void)
+{
+    if (s_coll_chip == NULL) {
+        return;
+    }
+    if (s_coll_new && xSemaphoreTake(s_apt_lock, 0) == pdTRUE) {
+        s_coll_new = false;
+        cJSON *root = cJSON_Parse(s_coll_msg);
+        xSemaphoreGive(s_apt_lock);
+        if (root != NULL) {
+            const cJSON *lv = cJSON_GetObjectItem(root, "level");
+            const cJSON *sm = cJSON_GetObjectItem(root, "summary");
+            if (cJSON_IsNumber(lv)) {
+                s_coll_level = lv->valueint;
+            }
+            if (cJSON_IsString(sm)) {
+                strlcpy(s_coll_summary, sm->valuestring, sizeof(s_coll_summary));
+            }
+            cJSON_Delete(root);
+        }
+    }
+    int level = s_coll_level;
+    const char *txt = "COLL ?";
+    uint32_t col = 0x5a6272;
+    if (s_coll_us == 0 || esp_timer_get_time() - s_coll_us > COLL_STALE_US) {
+        level = s_coll_us == 0 ? -1 : 2;
+        if (s_coll_us != 0) {
+            strlcpy(s_coll_summary, "no status for over 2 minutes", sizeof(s_coll_summary));
+        }
+    }
+    if (level == 0) {
+        txt = "COLL OK";
+        col = 0x228c50;
+    } else if (level == 1) {
+        txt = "COLL WARN";
+        col = 0xc27c00;
+    } else if (level == 2) {
+        txt = "COLL DOWN";
+        col = 0xd7263d;
+    }
+    label_set_if_changed(s_coll_lbl, txt);
+    if (lv_obj_get_style_bg_color(s_coll_chip, 0).full != lv_color_hex(col).full) {
+        lv_obj_set_style_bg_color(s_coll_chip, lv_color_hex(col), 0);
+    }
+}
 
 static bool s_mqtt_down(void)
 {
@@ -600,6 +682,23 @@ static void build_header(lv_obj_t *scr)
     lv_obj_set_style_text_align(s_status_label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, -UISX(184), 0);
     lv_label_set_text(s_status_label, "...");
+
+    /* krk-airport-collector status chip, between the weather and the clock;
+     * a tap shows what is failing */
+    s_coll_chip = lv_obj_create(hdr);
+    lv_obj_set_size(s_coll_chip, UISX(104), UISY(26));
+    lv_obj_align(s_coll_chip, LV_ALIGN_LEFT_MID, UISX(360), 0);
+    lv_obj_set_style_radius(s_coll_chip, UISY(6), 0);
+    lv_obj_set_style_border_width(s_coll_chip, 0, 0);
+    lv_obj_set_style_pad_all(s_coll_chip, 0, 0);
+    lv_obj_set_style_bg_color(s_coll_chip, lv_color_hex(0x5a6272), 0);
+    lv_obj_clear_flag(s_coll_chip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_coll_chip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_coll_chip, UISY(8));
+    lv_obj_add_event_cb(s_coll_chip, coll_chip_cb, LV_EVENT_CLICKED, NULL);
+    s_coll_lbl = make_label(s_coll_chip, UIFONT(&font_pl_14, &font_pl_8), lv_color_hex(0xffffff));
+    lv_label_set_text(s_coll_lbl, "COLL ?");
+    lv_obj_center(s_coll_lbl);
 
     /* same slot as the status, shown instead of it while a source is down */
     s_warn_label = make_label(hdr, UIFONT(&font_pl_14, &font_pl_8), lv_color_hex(0xff5252));
@@ -1383,10 +1482,19 @@ static void airport_timer_cb(lv_timer_t *t)
         label_set_if_changed(s_apt_arr, "");
         label_set_if_changed(s_apt_dep, "");
     }
+    coll_render();
+
     /* data sources that went quiet: red line in the header instead of the
-     * usual status, and the same text on the radar console */
+     * usual status, and the same text on the radar console; a collector
+     * reporting its own trouble joins the radar line */
     char probs[160];
     bool any = srcstat_problems(probs, sizeof(probs)) > 0;
+    if (s_coll_level > 0 && strcmp(s_coll_summary, "OK") != 0) {
+        size_t pl = strlen(probs);
+        snprintf(probs + pl, sizeof(probs) - pl, "%sCOLLECTOR: %s", pl ? " | " : "",
+                 s_coll_summary);
+    }
+    bool radar_any = probs[0] != '\0';
     if (s_warn_label != NULL) {
         if (any) {
             label_set_if_changed(s_warn_label, probs);
@@ -1394,7 +1502,7 @@ static void airport_timer_cb(lv_timer_t *t)
         set_hidden(s_warn_label, !any);
         set_hidden(s_status_label, any);
     }
-    crt_radar_set_warning(any ? probs : "");
+    crt_radar_set_warning(radar_any ? probs : "");
     crt_radar_set_airport(s_apt_level, lv_label_get_text(s_apt_chip_lbl),
                           lv_label_get_text(s_apt_wx), lv_label_get_text(s_apt_arr),
                           lv_label_get_text(s_apt_dep));
@@ -2027,6 +2135,7 @@ void ui_init(void)
     /* before MQTT starts: the retained message arrives right after connecting */
     s_apt_lock = xSemaphoreCreateMutex();
     s_apt_msg = heap_caps_malloc(APT_MSG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_coll_msg = heap_caps_malloc(COLL_MSG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, COL_BG, 0);
