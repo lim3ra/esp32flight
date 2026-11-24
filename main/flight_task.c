@@ -563,7 +563,10 @@ static void flight_task(void *arg)
             /* How many enrichment lookups this cycle will actually hit the
              * network decides whether an early render pays off: with a warm
              * cache the cycle finishes in milliseconds anyway. */
-            int top = list->count < ROUTE_LOOKUP_TOP_N ? list->count : ROUTE_LOOKUP_TOP_N;
+            /* with the collector feed the enrichment arrives in it: no route,
+             * airline or FlightAware lookups from here (top = 0 skips them) */
+            int top = flight_feed_active() ? 0
+                    : list->count < ROUTE_LOOKUP_TOP_N ? list->count : ROUTE_LOOKUP_TOP_N;
             int pending = 0;
             for (int i = 0; i < top; i++) {
                 const aircraft_t *ac = &list->ac[i];

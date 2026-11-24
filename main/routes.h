@@ -28,3 +28,7 @@ const route_info_t *routes_fetch(const char *callsign,
  * callsign: airports resolved from the bundled database. Overwrites a
  * negative cache entry; keeps an existing valid one. */
 void routes_inject(const char *callsign, const char *orig_icao, const char *dest_icao);
+
+/* The collector looked this callsign up and found no route: keep (or make)
+ * a negative entry so the panel does not query the route DBs itself. */
+void routes_mark_unknown(const char *callsign);

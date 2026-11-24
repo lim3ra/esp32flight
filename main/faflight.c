@@ -36,6 +36,25 @@ const char *faflight_get_cached(const char *callsign)
     return NULL;
 }
 
+void faflight_put(const char *callsign, const char *iata)
+{
+    if (callsign == NULL || callsign[0] == '\0' || iata == NULL) {
+        return;
+    }
+    for (int i = 0; i < FA_CACHE_SIZE; i++) {
+        if (s_cache[i].used && strcmp(s_cache[i].callsign, callsign) == 0) {
+            strlcpy(s_cache[i].iata, iata, sizeof(s_cache[i].iata));
+            return;
+        }
+    }
+    fa_entry_t *slot = &s_cache[s_next];
+    s_next = (s_next + 1) % FA_CACHE_SIZE;
+    memset(slot, 0, sizeof(*slot));
+    strlcpy(slot->callsign, callsign, sizeof(slot->callsign));
+    strlcpy(slot->iata, iata, sizeof(slot->iata));
+    slot->used = true;
+}
+
 const char *faflight_fetch(const char *callsign)
 {
     const char *cached = faflight_get_cached(callsign);

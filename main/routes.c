@@ -542,6 +542,22 @@ void routes_revalidate(const char *callsign,
     }
 }
 
+void routes_mark_unknown(const char *callsign)
+{
+    if (callsign == NULL || callsign[0] == '\0' || !cache_ready()) {
+        return;
+    }
+    for (int i = 0; i < s_used; i++) {
+        if (strcmp(s_cache[i].callsign, callsign) == 0) {
+            if (!s_cache[i].valid) {
+                s_cache[i].fetched_ms = esp_timer_get_time() / 1000;   /* keep it negative */
+            }
+            return;
+        }
+    }
+    cache_slot(callsign);       /* a fresh slot is a negative entry */
+}
+
 void routes_inject(const char *callsign, const char *orig_icao, const char *dest_icao)
 {
     if (callsign == NULL || callsign[0] == '\0' || !cache_ready() ||

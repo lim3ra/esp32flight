@@ -35,6 +35,25 @@ const char *airlines_get_cached(const char *icao)
     return NULL;
 }
 
+void airlines_put(const char *icao, const char *name)
+{
+    if (icao == NULL || strlen(icao) != 3 || name == NULL) {
+        return;
+    }
+    for (int i = 0; i < AIRLINE_CACHE_SIZE; i++) {
+        if (s_cache[i].used && strcmp(s_cache[i].icao, icao) == 0) {
+            strlcpy(s_cache[i].name, name, sizeof(s_cache[i].name));
+            return;
+        }
+    }
+    airline_entry_t *slot = &s_cache[s_next];
+    s_next = (s_next + 1) % AIRLINE_CACHE_SIZE;
+    memset(slot, 0, sizeof(*slot));
+    strlcpy(slot->icao, icao, sizeof(slot->icao));
+    strlcpy(slot->name, name, sizeof(slot->name));
+    slot->used = true;
+}
+
 const char *airlines_fetch(const char *icao)
 {
     const char *cached = airlines_get_cached(icao);

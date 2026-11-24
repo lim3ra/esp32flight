@@ -11,6 +11,10 @@ esp_err_t flight_fetch_nearby(double lat, double lon, int radius_nm, aircraft_li
  * younger than 20 s, flight_fetch_nearby parses it instead of going online. */
 void flight_feed(const char *data, int len);
 
+/* True while the collector feed is fresh: routes, airline names and flight
+ * numbers then come with it, and flight_task does not look them up. */
+bool flight_feed_active(void);
+
 /* Airline-shaped traffic heuristic (AAA123 callsign + non-light category). */
 bool flight_is_airline(const aircraft_t *ac);
 

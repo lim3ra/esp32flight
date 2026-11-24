@@ -13,6 +13,9 @@
 #include "settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "airlines.h"
+#include "faflight.h"
+#include "routes.h"
 
 static const char *TAG = "flights";
 
@@ -45,6 +48,11 @@ void flight_feed(const char *data, int len)
         s_feed_us = esp_timer_get_time();
         xSemaphoreGive(s_feed_lock);
     }
+}
+
+bool flight_feed_active(void)
+{
+    return s_feed_len > 0 && esp_timer_get_time() - s_feed_us <= FEED_FRESH_US;
 }
 
 /* Copy the collector feed into buf when it is fresh; false otherwise. */
@@ -224,6 +232,37 @@ static void parse_aircraft(const cJSON *jac, aircraft_t *ac)
     }
 }
 
+/* Collector feed extras (absent in aggregator answers): rq = route looked
+ * up, ro/rd = origin/destination ICAO, an/ai = airline, fa = IATA flight
+ * number. Filling the caches here is what keeps flight_task from querying
+ * adsbdb, hexdb and FlightAware itself. */
+static void enrich_from_feed(const cJSON *jac, const aircraft_t *ac)
+{
+    if (ac->callsign[0] == '\0') {
+        return;
+    }
+    const cJSON *rq = cJSON_GetObjectItem(jac, "rq");
+    if (cJSON_IsNumber(rq)) {
+        const cJSON *ro = cJSON_GetObjectItem(jac, "ro");
+        const cJSON *rd = cJSON_GetObjectItem(jac, "rd");
+        if (cJSON_IsString(ro) && cJSON_IsString(rd)) {
+            routes_inject(ac->callsign, ro->valuestring, rd->valuestring);
+        }
+        if (routes_get_cached(ac->callsign) == NULL) {
+            routes_mark_unknown(ac->callsign);
+        }
+        const cJSON *an = cJSON_GetObjectItem(jac, "an");
+        if (strlen(ac->callsign) >= 3) {
+            char code[4] = { ac->callsign[0], ac->callsign[1], ac->callsign[2], '\0' };
+            airlines_put(code, cJSON_IsString(an) ? an->valuestring : "");
+        }
+    }
+    const cJSON *fa = cJSON_GetObjectItem(jac, "fa");
+    if (cJSON_IsString(fa)) {
+        faflight_put(ac->callsign, fa->valuestring);
+    }
+}
+
 static int cmp_by_dist(const void *a, const void *b)
 {
     const aircraft_t *aa = a, *bb = b;
@@ -259,6 +298,7 @@ static esp_err_t parse_point_response(const char *json, double lat, double lon,
     cJSON_ArrayForEach(jac, jlist) {
         aircraft_t tmp;
         parse_aircraft(jac, &tmp);
+        enrich_from_feed(jac, &tmp);
         /* Skip targets without position: nothing to show or compute. */
         if (!tmp.has_pos) {
             continue;
