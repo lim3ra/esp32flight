@@ -1,5 +1,6 @@
 #include "mqtt_pub.h"
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -268,14 +269,54 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
 }
 
 
+/* In-place %XX decoding of a URI component. */
+static void pct_decode(char *s)
+{
+    char *o = s;
+    for (; *s; s++) {
+        if (s[0] == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            char hex[3] = { s[1], s[2], 0 };
+            *o++ = (char)strtol(hex, NULL, 16);
+            s += 2;
+        } else {
+            *o++ = *s;
+        }
+    }
+    *o = '\0';
+}
+
 void mqtt_pub_start(void)
 {
     const char *uri = settings_get()->mqtt_uri;
     if (uri[0] == '\0') {
         return;
     }
+    /* esp-mqtt takes user:pass@ from the URI verbatim, and a raw '#', '@'
+     * or '/' in a password breaks the URL parse - so the credentials are
+     * split off here, %XX-decoded, and passed as separate fields. A
+     * password with '#' is written as %23 in the settings. */
+    static char s_uri[96], s_user[64], s_pass[64];
+    strlcpy(s_uri, uri, sizeof(s_uri));
+    s_user[0] = s_pass[0] = '\0';
+    char *auth = strstr(s_uri, "://");
+    char *at = auth != NULL ? strrchr(auth + 3, '@') : NULL;
+    if (at != NULL) {
+        char *info = auth + 3;
+        *at = '\0';
+        char *colon = strchr(info, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            strlcpy(s_pass, colon + 1, sizeof(s_pass));
+            pct_decode(s_pass);
+        }
+        strlcpy(s_user, info, sizeof(s_user));
+        pct_decode(s_user);
+        memmove(info, at + 1, strlen(at + 1) + 1);   /* drop "user:pass@" */
+    }
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri = uri,
+        .broker.address.uri = s_uri,
+        .credentials.username = s_user[0] ? s_user : NULL,
+        .credentials.authentication.password = s_pass[0] ? s_pass : NULL,
         .task.priority = 4,
     };
     s_client = esp_mqtt_client_init(&cfg);
@@ -285,10 +326,8 @@ void mqtt_pub_start(void)
     }
     esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event, NULL);
     esp_mqtt_client_start(s_client);
-    /* The URI can carry user:pass@, and logs get shared: print the host only.
-     * Last '@', because a password may contain one. */
-    const char *at = strrchr(uri, '@');
-    ESP_LOGI(TAG, "connecting to %s", at != NULL ? at + 1 : uri);
+    /* credentials were split off above: s_uri holds the host only */
+    ESP_LOGI(TAG, "connecting to %s", s_uri);
 }
 
 void mqtt_pub_backlight_changed(void)
