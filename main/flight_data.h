@@ -7,6 +7,10 @@
  * falls back to adsb.lol (same JSON schema). Result sorted by distance. */
 esp_err_t flight_fetch_nearby(double lat, double lon, int radius_nm, aircraft_list_t *out);
 
+/* krk-airport/aircraft message from the collector (any task). While it is
+ * younger than 20 s, flight_fetch_nearby parses it instead of going online. */
+void flight_feed(const char *data, int len);
+
 /* Airline-shaped traffic heuristic (AAA123 callsign + non-light category). */
 bool flight_is_airline(const aircraft_t *ac);
 

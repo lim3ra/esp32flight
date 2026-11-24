@@ -11,10 +11,57 @@
 #include "http_util.h"
 #include "geo_math.h"
 #include "settings.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "flights";
 
 #define FETCH_BUF_SIZE (256 * 1024)
+
+/* Positions from krk-airport-collector (topic krk-airport/aircraft): the
+ * aggregators merged there every 5 s, in their own JSON shape, so the same
+ * parser takes it and the panel opens no TLS session for positions. */
+#define FEED_FRESH_US (20LL * 1000 * 1000)
+static SemaphoreHandle_t s_feed_lock;
+static char   *s_feed;            /* PSRAM, FETCH_BUF_SIZE */
+static int     s_feed_len;
+static int64_t s_feed_us;
+
+void flight_feed(const char *data, int len)
+{
+    if (s_feed_lock == NULL) {
+        s_feed_lock = xSemaphoreCreateMutex();
+    }
+    if (s_feed == NULL) {
+        s_feed = heap_caps_malloc(FETCH_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    }
+    if (s_feed_lock == NULL || s_feed == NULL || len <= 0 || len >= FETCH_BUF_SIZE) {
+        return;
+    }
+    if (xSemaphoreTake(s_feed_lock, pdMS_TO_TICKS(500)) == pdTRUE) {
+        memcpy(s_feed, data, (size_t)len);
+        s_feed[len] = '\0';
+        s_feed_len = len;
+        s_feed_us = esp_timer_get_time();
+        xSemaphoreGive(s_feed_lock);
+    }
+}
+
+/* Copy the collector feed into buf when it is fresh; false otherwise. */
+static bool feed_take(char *buf)
+{
+    if (s_feed_lock == NULL || s_feed_len == 0 ||
+        esp_timer_get_time() - s_feed_us > FEED_FRESH_US) {
+        return false;
+    }
+    bool ok = false;
+    if (xSemaphoreTake(s_feed_lock, pdMS_TO_TICKS(500)) == pdTRUE) {
+        memcpy(buf, s_feed, (size_t)s_feed_len + 1);
+        ok = true;
+        xSemaphoreGive(s_feed_lock);
+    }
+    return ok;
+}
 
 bool flight_is_airline(const aircraft_t *ac)
 {
@@ -286,6 +333,13 @@ esp_err_t flight_fetch_nearby(double lat, double lon, int radius_nm, aircraft_li
     }
     if (buf == NULL) {
         return ESP_ERR_NO_MEM;
+    }
+
+    /* collector feed first: no network at all while it is fresh */
+    if (feed_take(buf) && parse_point_response(buf, lat, lon, out) == ESP_OK) {
+        localize_and_filter(out, lat, lon, radius_nm);
+        qsort(out->ac, out->count, sizeof(aircraft_t), cmp_by_dist);
+        return ESP_OK;
     }
 
     /* LAN receiver first, when configured and enabled (the switch lets

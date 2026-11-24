@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "airspace.h"
 #include "raingrid.h"
+#include "flight_data.h"
 #include "srcstat.h"
 #include "weather.h"
 #include "esp_heap_caps.h"
@@ -26,6 +27,7 @@ static const char *TAG = "mqtt";
 #define AIRSPACE_TOPIC  "krk-airport/airspaces"
 #define RAIN_TOPIC      "krk-airport/rain"
 #define WEATHER_TOPIC   "krk-airport/weather"
+#define AIRCRAFT_TOPIC  "krk-airport/aircraft"
 #define BL_CONFIG_TOPIC "homeassistant/light/esp32flight_backlight/config"
 #define BL_STATE_TOPIC  "esp32flight/backlight/state"
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
@@ -188,6 +190,7 @@ static void publish_discovery(void)
     esp_mqtt_client_subscribe(s_client, AIRSPACE_TOPIC, 0);
     esp_mqtt_client_subscribe(s_client, RAIN_TOPIC, 0);
     esp_mqtt_client_subscribe(s_client, WEATHER_TOPIC, 0);
+    esp_mqtt_client_subscribe(s_client, AIRCRAFT_TOPIC, 0);
     /* Backlight as an HA light with brightness (lim3ra's request). Only
      * when the master brightness switch is on and the panel can dim; an
      * empty retained payload removes a previously discovered entity. */
@@ -277,6 +280,9 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
             } else if (ev->topic_len == (int)strlen(RAIN_TOPIC) &&
                        strncmp(ev->topic, RAIN_TOPIC, (size_t)ev->topic_len) == 0) {
                 kind = 2;
+            } else if (ev->topic_len == (int)strlen(AIRCRAFT_TOPIC) &&
+                       strncmp(ev->topic, AIRCRAFT_TOPIC, (size_t)ev->topic_len) == 0) {
+                kind = 3;
             }
             if (kind != 0) {
                 free(s_big_buf);
@@ -296,8 +302,11 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
             if (ev->current_data_offset + ev->data_len == s_big_total) {
                 if (s_big_kind == 1) {
                     airspace_feed(s_big_buf, s_big_total);
-                } else {
+                } else if (s_big_kind == 2) {
                     raingrid_feed((const uint8_t *)s_big_buf, s_big_total);
+                } else {
+                    flight_feed(s_big_buf, s_big_total);
+                    srcstat_ok(SRC_COLLECTOR);
                 }
                 free(s_big_buf);
                 s_big_buf = NULL;
