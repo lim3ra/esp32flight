@@ -601,15 +601,35 @@ static void build_map(void)
         if (a == NULL || a->n_points < 2) {
             continue;
         }
-        int v = a->type == 4 ? 2 : 1;   /* openAIP 4 = CTR */
+        /* openAIP types: control zones bright and solid, terminal areas and
+         * ATZs dashed, restricted/prohibited/danger/TRA faint and dotted */
+        int v, dash;
+        switch (a->type) {
+        case 4: case 27:  v = 3; dash = 0; break;    /* CTR, MCTR */
+        case 7: case 26:  v = 2; dash = 8; break;    /* TMA, MTMA */
+        case 13:          v = 2; dash = 4; break;    /* ATZ */
+        default:          v = 1; dash = 2; break;    /* R, P, D, TRA */
+        }
+        float cx = 0, cy = 0;
         for (int k = 0; k < a->n_points; k++) {
             int k2 = (k + 1) % a->n_points;
             float x0, y0, x1, y1;
             geo_to_scope(a->lat[k], a->lon[k], &x0, &y0);
             geo_to_scope(a->lat[k2], a->lon[k2], &x1, &y1);
+            cx += x0;
+            cy += y0;
             if (seg_visible(x0, y0, x1, y1)) {
-                map_line((int)x0, (int)y0, (int)x1, (int)y1, v, 6);
+                map_line((int)x0, (int)y0, (int)x1, (int)y1, v, dash);
             }
+        }
+        /* type label at the vertex centroid, when that lies on the scope */
+        cx /= a->n_points;
+        cy /= a->n_points;
+        const char *lbl = airspace_type_str(a->type);
+        float ddx = cx - SCOPE_C, ddy = cy - SCOPE_C;
+        if (lbl[0] && ddx * ddx + ddy * ddy < (TUBE_R - 30) * (TUBE_R - 30)) {
+            draw_text(lbl, (int)cx - (int)strlen(lbl) * 4, (int)cy - 8, plot_map,
+                      (void *)(intptr_t)(v > 1 ? 2 : 1));
         }
     }
     s_map_radius = range;
