@@ -33,6 +33,7 @@
 #include "mqtt_pub.h"
 #include "crt_radar.h"
 #include "srcstat.h"
+#include "raingrid.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -800,7 +801,8 @@ static void radar_tiles_want(void)
      * stayed as they were at the last pan or zoom. */
     snprintf(key, sizeof(key), "%.3f,%.3f,%d,%.2f,%d", s_home_lat, s_home_lon,
              radius_nm, s_radar_zoom,
-             settings_get()->rain_overlay ? rainviewer_generation() : -1);
+             !settings_get()->rain_overlay ? -1
+             : raingrid_fresh() ? 100000 + raingrid_generation() : rainviewer_generation());
     bool radar_stale = s_radar_partial_ms != 0 &&
                        esp_timer_get_time() / 1000 - s_radar_partial_ms > 20000;
     if (strcmp(key, s_radar_key) == 0 && !radar_stale) {

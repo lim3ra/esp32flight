@@ -15,6 +15,10 @@ typedef struct {
  * Blocking; call from a network task. */
 esp_err_t weather_fetch(double lat, double lon, weather_t *out);
 
+/* krk-airport/weather message from the collector, any task. While it is
+ * fresh, weather_fetch answers from it without going online. */
+void weather_feed(const char *data, int len);
+
 /* Short English description for a WMO weather code. */
 const char *weather_code_str(int code);
 

@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "airspace.h"
 #include "rainviewer.h"
+#include "raingrid.h"
 #include "routes.h"
 #include "runways.h"
 #include "settings.h"
@@ -725,6 +726,40 @@ static void rain_maybe_request(void)
     }
     float km = settings_get()->radius_nm * 1.852f;
     bool range_moved = fabsf(km - s_rain_km) > 0.5f;
+    if (raingrid_fresh()) {
+        /* collector grid: straight lookups, no tile fetch, no worker */
+        static int s_grid_gen = -1;
+        if (!range_moved && raingrid_generation() == s_grid_gen) {
+            return;
+        }
+        s_grid_gen = raingrid_generation();
+        float kmpp = km / RANGE_R;
+        double coslat = cos(s_home_lat * M_PI / 180.0);
+        int lit = 0;
+        for (int cy = 0; cy < RAIN_D; cy++) {
+            double lat = s_home_lat + (SCOPE_C - (2 * cy + 1)) * kmpp / 110.574;
+            uint8_t *row = s_rain + (size_t)cy * RAIN_D;
+            for (int cx = 0; cx < RAIN_D; cx++) {
+                double lon = s_home_lon + ((2 * cx + 1) - SCOPE_C) * kmpp / (111.320 * coslat);
+                uint8_t idx = raingrid_sample(lat, lon), r, g, b, a, in = 0;
+                if (idx) {
+                    raingrid_palette(idx, &r, &g, &b, &a, &in);
+                    lit++;
+                }
+                row[cx] = in;
+            }
+        }
+        s_rain_km = km;
+        s_rain_cells = lit;
+        time_t ft = (time_t)raingrid_frame_time();
+        if (ft > 1600000000) {
+            time_t l = ft + (tz_home_known() ? tz_home_offset() : 0);
+            struct tm tm;
+            gmtime_r(&l, &tm);
+            snprintf(s_rain_when, sizeof(s_rain_when), "%02d:%02d", tm.tm_hour, tm.tm_min);
+        }
+        return;
+    }
     if (!range_moved && now_ms() - s_rain_ms < RAIN_EVERY_MS) {
         return;
     }

@@ -13,7 +13,9 @@
 #include "waveshare_rgb_lcd_port.h"
 #include "ui.h"
 #include "airspace.h"
+#include "raingrid.h"
 #include "srcstat.h"
+#include "weather.h"
 #include "esp_heap_caps.h"
 #endif
 
@@ -22,6 +24,8 @@ static const char *TAG = "mqtt";
 #define STATE_TOPIC     "esp32flight/state"
 #define HEALTH_TOPIC    "esp32flight/health"
 #define AIRSPACE_TOPIC  "krk-airport/airspaces"
+#define RAIN_TOPIC      "krk-airport/rain"
+#define WEATHER_TOPIC   "krk-airport/weather"
 #define BL_CONFIG_TOPIC "homeassistant/light/esp32flight_backlight/config"
 #define BL_STATE_TOPIC  "esp32flight/backlight/state"
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
@@ -182,6 +186,8 @@ static void publish_discovery(void)
 #ifndef APKFLIGHT
     esp_mqtt_client_subscribe(s_client, AIRPORT_TOPIC, 0);
     esp_mqtt_client_subscribe(s_client, AIRSPACE_TOPIC, 0);
+    esp_mqtt_client_subscribe(s_client, RAIN_TOPIC, 0);
+    esp_mqtt_client_subscribe(s_client, WEATHER_TOPIC, 0);
     /* Backlight as an HA light with brightness (lim3ra's request). Only
      * when the master brightness switch is on and the panel can dim; an
      * empty retained payload removes a previously discovered entity. */
@@ -257,30 +263,51 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
 #ifndef APKFLIGHT
     } else if (event_id == MQTT_EVENT_DATA) {
         esp_mqtt_event_handle_t ev = data;
-        /* The airspace message (~5 KB) is larger than the client buffer and
-         * arrives in pieces; only the first piece carries the topic. */
-        static char *s_asp_buf;
-        static int s_asp_total = -1;
-        if (ev->current_data_offset == 0 && ev->topic_len == (int)strlen(AIRSPACE_TOPIC) &&
-            strncmp(ev->topic, AIRSPACE_TOPIC, (size_t)ev->topic_len) == 0) {
-            free(s_asp_buf);
-            s_asp_buf = NULL;
-            s_asp_total = -1;
-            if (ev->total_data_len > 0 && ev->total_data_len <= 64 * 1024) {
-                s_asp_buf = heap_caps_malloc((size_t)ev->total_data_len, MALLOC_CAP_SPIRAM);
-                s_asp_total = s_asp_buf != NULL ? ev->total_data_len : -1;
+        /* The airspace (~12 KB) and rain (~35 KB) messages are larger than
+         * the client buffer and arrive in pieces; only the first piece
+         * carries the topic, so it decides where the rest goes. */
+        static char *s_big_buf;
+        static int s_big_total = -1;
+        static int s_big_kind;            /* 1 airspace, 2 rain */
+        if (ev->current_data_offset == 0 && ev->topic_len > 0) {
+            int kind = 0;
+            if (ev->topic_len == (int)strlen(AIRSPACE_TOPIC) &&
+                strncmp(ev->topic, AIRSPACE_TOPIC, (size_t)ev->topic_len) == 0) {
+                kind = 1;
+            } else if (ev->topic_len == (int)strlen(RAIN_TOPIC) &&
+                       strncmp(ev->topic, RAIN_TOPIC, (size_t)ev->topic_len) == 0) {
+                kind = 2;
+            }
+            if (kind != 0) {
+                free(s_big_buf);
+                s_big_buf = NULL;
+                s_big_total = -1;
+                if (ev->total_data_len > 0 && ev->total_data_len <= 128 * 1024) {
+                    s_big_buf = heap_caps_malloc((size_t)ev->total_data_len, MALLOC_CAP_SPIRAM);
+                    s_big_total = s_big_buf != NULL ? ev->total_data_len : -1;
+                    s_big_kind = kind;
+                }
             }
         }
-        if (s_asp_total > 0 && ev->total_data_len == s_asp_total &&
-            ev->current_data_offset + ev->data_len <= s_asp_total &&
+        if (s_big_total > 0 && ev->total_data_len == s_big_total &&
+            ev->current_data_offset + ev->data_len <= s_big_total &&
             (ev->current_data_offset > 0 || ev->topic_len > 0)) {
-            memcpy(s_asp_buf + ev->current_data_offset, ev->data, (size_t)ev->data_len);
-            if (ev->current_data_offset + ev->data_len == s_asp_total) {
-                airspace_feed(s_asp_buf, s_asp_total);
-                free(s_asp_buf);
-                s_asp_buf = NULL;
-                s_asp_total = -1;
+            memcpy(s_big_buf + ev->current_data_offset, ev->data, (size_t)ev->data_len);
+            if (ev->current_data_offset + ev->data_len == s_big_total) {
+                if (s_big_kind == 1) {
+                    airspace_feed(s_big_buf, s_big_total);
+                } else {
+                    raingrid_feed((const uint8_t *)s_big_buf, s_big_total);
+                }
+                free(s_big_buf);
+                s_big_buf = NULL;
+                s_big_total = -1;
             }
+            return;
+        }
+        if (ev->topic_len == (int)strlen(WEATHER_TOPIC) &&
+            strncmp(ev->topic, WEATHER_TOPIC, (size_t)ev->topic_len) == 0) {
+            weather_feed(ev->data, ev->data_len);
             return;
         }
         if (ev->topic_len == (int)strlen(AIRPORT_TOPIC) &&

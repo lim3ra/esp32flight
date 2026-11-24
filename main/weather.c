@@ -2,15 +2,47 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "cJSON.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "http_util.h"
 #include "srcstat.h"
 
 static const char *TAG = "weather";
 
+/* Current conditions from krk-airport-collector, so the panel does not open
+ * a TLS session to Open-Meteo every few minutes:
+ *   WX1 <unix> <temp_c> <wmo_code> <wind_kmh> <wind_dir> */
+static weather_t s_feed;
+static int64_t s_feed_us;
+#define FEED_FRESH_US (40LL * 60 * 1000 * 1000)
+
+void weather_feed(const char *data, int len)
+{
+    char buf[96];
+    if (len <= 0 || len >= (int)sizeof(buf)) {
+        return;
+    }
+    memcpy(buf, data, (size_t)len);
+    buf[len] = '\0';
+    long long ts;
+    weather_t w = { 0 };
+    if (sscanf(buf, "WX1 %lld %f %d %f %d", &ts, &w.temp_c, &w.code, &w.wind_kmh,
+               &w.wind_dir_deg) == 5) {
+        w.valid = true;
+        s_feed = w;
+        s_feed_us = esp_timer_get_time();
+        srcstat_ok(SRC_WEATHER);
+    }
+}
+
 esp_err_t weather_fetch(double lat, double lon, weather_t *out)
 {
+    if (s_feed.valid && esp_timer_get_time() - s_feed_us < FEED_FRESH_US) {
+        *out = s_feed;
+        return ESP_OK;
+    }
     out->valid = false;
 
     char url[192];

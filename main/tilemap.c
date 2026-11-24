@@ -17,6 +17,7 @@
 
 #include "extra/libs/png/lodepng.h"
 #include "rainviewer.h"
+#include "raingrid.h"
 #include "settings.h"
 
 #include "freertos/FreeRTOS.h"
@@ -920,7 +921,34 @@ static bool render_impl(uint16_t *dst, int dst_w, int dst_h,
     }
 rain_pass:
     /* optional precipitation layer on top (RainViewer, same tile grid) */
-    if ((layers & TM_LAYER_RAIN) && ok > 0) {
+    if ((layers & TM_LAYER_RAIN) && ok > 0 && raingrid_fresh()) {
+        /* collector grid: RainViewer's own colours, no tile fetch or PNG
+         * decode here; mercator rows map to one latitude each */
+        double world_px = (double)TILE_PX * (1 << z);
+        for (int y = 0; y < dst_h; y++) {
+            double gy = py0 + y + 0.5;
+            double lat = atan(sinh(M_PI * (1.0 - 2.0 * gy / world_px))) * 180.0 / M_PI;
+            for (int x = 0; x < dst_w; x++) {
+                double lon = (px0 + x + 0.5) / world_px * 360.0 - 180.0;
+                uint8_t idx = raingrid_sample(lat, lon);
+                if (idx == 0) {
+                    continue;
+                }
+                uint8_t cr, cg, cb, ca, ci;
+                raingrid_palette(idx, &cr, &cg, &cb, &ca, &ci);
+                int a = ca * 3 / 4;      /* keep the basemap readable */
+                if (a < 10) {
+                    continue;
+                }
+                uint16_t bg = dst[(size_t)y * dst_w + x];
+                int br = (bg >> 11) << 3, bgc = ((bg >> 5) & 0x3F) << 2, bb = (bg & 0x1F) << 3;
+                int r = (cr * a + br * (255 - a)) / 255;
+                int g = (cg * a + bgc * (255 - a)) / 255;
+                int b = (cb * a + bb * (255 - a)) / 255;
+                dst[(size_t)y * dst_w + x] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            }
+        }
+    } else if ((layers & TM_LAYER_RAIN) && ok > 0) {
         const char *frame = rainviewer_frame_path();
         if (frame[0] != '\0') {
             for (int ty = ty0; ty <= ty1; ty++) {

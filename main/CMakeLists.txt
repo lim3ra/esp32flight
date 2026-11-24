@@ -52,6 +52,7 @@ idf_component_register(
         "crt_radar.c"
         "sysmon.c"
         "srcstat.c"
+        "raingrid.c"
         "ui_settings.c"
         "web_server.c"
         "font_pl_8.c"
