@@ -12,12 +12,16 @@
 #ifndef APKFLIGHT
 #include "waveshare_rgb_lcd_port.h"
 #include "ui.h"
+#include "airspace.h"
+#include "srcstat.h"
+#include "esp_heap_caps.h"
 #endif
 
 static const char *TAG = "mqtt";
 
 #define STATE_TOPIC     "esp32flight/state"
 #define HEALTH_TOPIC    "esp32flight/health"
+#define AIRSPACE_TOPIC  "krk-airport/airspaces"
 #define BL_CONFIG_TOPIC "homeassistant/light/esp32flight_backlight/config"
 #define BL_STATE_TOPIC  "esp32flight/backlight/state"
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
@@ -177,6 +181,7 @@ static void publish_discovery(void)
     }
 #ifndef APKFLIGHT
     esp_mqtt_client_subscribe(s_client, AIRPORT_TOPIC, 0);
+    esp_mqtt_client_subscribe(s_client, AIRSPACE_TOPIC, 0);
     /* Backlight as an HA light with brightness (lim3ra's request). Only
      * when the master brightness switch is on and the panel can dim; an
      * empty retained payload removes a previously discovered entity. */
@@ -243,13 +248,41 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t event_id, void 
 {
     if (event_id == MQTT_EVENT_CONNECTED) {
         s_connected = true;
+        srcstat_link(SRC_BROKER, true);
         ESP_LOGI(TAG, "connected");
         publish_discovery();
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         s_connected = false;
+        srcstat_link(SRC_BROKER, false);
 #ifndef APKFLIGHT
     } else if (event_id == MQTT_EVENT_DATA) {
         esp_mqtt_event_handle_t ev = data;
+        /* The airspace message (~5 KB) is larger than the client buffer and
+         * arrives in pieces; only the first piece carries the topic. */
+        static char *s_asp_buf;
+        static int s_asp_total = -1;
+        if (ev->current_data_offset == 0 && ev->topic_len == (int)strlen(AIRSPACE_TOPIC) &&
+            strncmp(ev->topic, AIRSPACE_TOPIC, (size_t)ev->topic_len) == 0) {
+            free(s_asp_buf);
+            s_asp_buf = NULL;
+            s_asp_total = -1;
+            if (ev->total_data_len > 0 && ev->total_data_len <= 64 * 1024) {
+                s_asp_buf = heap_caps_malloc((size_t)ev->total_data_len, MALLOC_CAP_SPIRAM);
+                s_asp_total = s_asp_buf != NULL ? ev->total_data_len : -1;
+            }
+        }
+        if (s_asp_total > 0 && ev->total_data_len == s_asp_total &&
+            ev->current_data_offset + ev->data_len <= s_asp_total &&
+            (ev->current_data_offset > 0 || ev->topic_len > 0)) {
+            memcpy(s_asp_buf + ev->current_data_offset, ev->data, (size_t)ev->data_len);
+            if (ev->current_data_offset + ev->data_len == s_asp_total) {
+                airspace_feed(s_asp_buf, s_asp_total);
+                free(s_asp_buf);
+                s_asp_buf = NULL;
+                s_asp_total = -1;
+            }
+            return;
+        }
         if (ev->topic_len == (int)strlen(AIRPORT_TOPIC) &&
             strncmp(ev->topic, AIRPORT_TOPIC, (size_t)ev->topic_len) == 0) {
             /* The message is far below the client's buffer size, so a

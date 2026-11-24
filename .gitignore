@@ -41,3 +41,6 @@ sdkconfig.8mb
 sdkconfig.guition
 sdkconfig.sunton43
 sdkconfig.sunton43r
+
+# API keys and broker credentials pulled from the panel (never commit)
+device.env

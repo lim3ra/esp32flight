@@ -6,73 +6,60 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "geo_math.h"
-#include "http_util.h"
 #include "settings.h"
+#include "srcstat.h"
 
 static const char *TAG = "airspace";
 
-/* Outlines survive a reboot here. Header first, then s_count entries. */
+/* Since 2026-11-05 openAIP refuses geospatial queries (pos/dist, bbox) from
+ * external clients, and paging a whole country of JSON through TLS is more
+ * than this board can spare. krk-airport-collector does the fetching,
+ * filtering and simplifying and publishes a retained text message:
+ *   ASP1 <unix> <count>
+ *   <type>\t<name>\t<lat>,<lon>;<lat>,<lon>;...
+ * The last feed is kept in flash so outlines show before MQTT connects. */
+
 #define CACHE_PATH   "/assets/airspace.bin"
-#define CACHE_MAGIC  0x31505341u        /* "ASP1" */
+#define CACHE_MAGIC  0x32505341u        /* "ASP2": collector feed */
 
 typedef struct {
     uint32_t magic;
-    uint32_t key_fp;    /* so a new openAIP key invalidates the cache */
-    float    lat, lon;  /* where it was fetched, for the 25 km check */
+    int64_t  feed_unix;
     int32_t  count;
 } asp_cache_hdr_t;
 
-#define FETCH_DIST_M   50000   /* openAIP caps dist at 50 km */
-#define RETRY_US       (30LL * 60 * 1000 * 1000)
-
-/* Ask only for the types we draw. Unfiltered, a 50 km query answers with
- * ~340 KB, and cJSON needs several times the text size in nodes to parse it
- * - more than this board has free, so the parse failed and the layer stayed
- * empty. Filtered, the same area is ~38 KB. Keep in step with
- * airspace_type_str. */
-#define TYPE_QUERY \
-    "&type=1&type=2&type=3&type=4&type=7&type=13&type=21&type=26&type=27"
-
-#define BUF_SIZE       (128 * 1024)
-
 static airspace_t *s_asp;     /* PSRAM, MAX_AIRSPACES entries */
+static airspace_t *s_tmp;     /* PSRAM, parse target swapped in at the end */
 static int s_count;
-static double s_try_lat = 999, s_try_lon = 999;
-static int64_t s_last_try = -RETRY_US;
-static char s_try_key[64];
-static bool s_ok;             /* last fetch for s_try location and key succeeded */
 static bool s_loaded;         /* cache file consulted once this boot */
+static int64_t s_feed_unix;   /* collector timestamp of the outlines shown */
 
-static uint32_t key_fp(const char *s)
+static bool ensure_tables(void)
 {
-    uint32_t h = 2166136261u;           /* FNV-1a */
-    for (; *s != '\0'; s++) {
-        h = (h ^ (uint8_t)*s) * 16777619u;
+    if (s_asp == NULL) {
+        s_asp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
+                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
-    return h;
+    if (s_tmp == NULL) {
+        s_tmp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
+                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return s_asp != NULL && s_tmp != NULL;
 }
 
-static void cache_save(double home_lat, double home_lon, const char *key)
+static void cache_save(void)
 {
-    if (s_count <= 0 || s_asp == NULL) {
+    if (s_count <= 0) {
         return;
     }
     FILE *f = fopen(CACHE_PATH, "wb");
     if (f == NULL) {
         return;
     }
-    asp_cache_hdr_t h = {
-        .magic = CACHE_MAGIC,
-        .key_fp = key_fp(key),
-        .lat = (float)home_lat,
-        .lon = (float)home_lon,
-        .count = s_count,
-    };
+    asp_cache_hdr_t h = { .magic = CACHE_MAGIC, .feed_unix = s_feed_unix, .count = s_count };
     if (fwrite(&h, sizeof(h), 1, f) != 1 ||
         fwrite(s_asp, sizeof(airspace_t), (size_t)s_count, f) != (size_t)s_count) {
         fclose(f);
@@ -82,27 +69,17 @@ static void cache_save(double home_lat, double home_lon, const char *key)
     fclose(f);
 }
 
-/* Draw something at boot instead of waiting out a fetch - and, when the
- * fetch fails, instead of waiting out the 30 minute retry with a bare map. */
-static void cache_load(double home_lat, double home_lon, const char *key)
+static void cache_load(void)
 {
     FILE *f = fopen(CACHE_PATH, "rb");
     if (f == NULL) {
         return;
     }
     asp_cache_hdr_t h;
-    if (fread(&h, sizeof(h), 1, f) != 1 || h.magic != CACHE_MAGIC ||
-        h.key_fp != key_fp(key) || h.count <= 0 || h.count > MAX_AIRSPACES ||
-        geo_haversine_km(h.lat, h.lon, home_lat, home_lon) > 25.0) {
-        fclose(f);
-        return;
-    }
-    if (s_asp == NULL) {
-        s_asp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
-                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    }
-    if (s_asp != NULL &&
+    if (fread(&h, sizeof(h), 1, f) == 1 && h.magic == CACHE_MAGIC &&
+        h.count > 0 && h.count <= MAX_AIRSPACES && ensure_tables() &&
         fread(s_asp, sizeof(airspace_t), (size_t)h.count, f) == (size_t)h.count) {
+        s_feed_unix = h.feed_unix;
         s_count = h.count;
         ESP_LOGI(TAG, "%d outlines restored from cache", s_count);
     }
@@ -126,156 +103,91 @@ const char *airspace_type_str(int type)
     }
 }
 
-static bool type_wanted(int type)
+void airspace_feed(const char *data, int len)
 {
-    return airspace_type_str(type)[0] != '\0';
-}
-
-static void parse_airspaces(const char *json, double home_lat, double home_lon)
-{
-    cJSON *root = cJSON_Parse(json);
-    if (root == NULL) {
-        /* Silently tolerating this is what made an out-of-memory parse look
-         * like "there are no airspaces here". */
-        /* keep whatever is already on screen rather than blanking it */
-        ESP_LOGW(TAG, "response did not parse (%u bytes, PSRAM free %u)",
-                 (unsigned)strlen(json),
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    if (len < 5 || strncmp(data, "ASP1", 4) != 0) {
+        ESP_LOGW(TAG, "feed ignored (%d bytes, no ASP1 header)", len);
         return;
     }
-    s_count = 0;   /* renderer reads from another task; hide during rewrite */
-    const cJSON *items = cJSON_GetObjectItem(root, "items");
+    if (!ensure_tables()) {
+        return;
+    }
+    const char *end = data + len;
+    const char *p = memchr(data, '\n', (size_t)len);
+    int64_t unix_ts = atoll(data + 4);
+    p = p != NULL ? p + 1 : end;
     int n = 0;
-    for (const cJSON *it = items != NULL ? items->child : NULL;
-         it != NULL && n < MAX_AIRSPACES; it = it->next) {
-        const cJSON *ty = cJSON_GetObjectItem(it, "type");
-        if (!cJSON_IsNumber(ty) || !type_wanted(ty->valueint)) {
-            continue;
+    while (p < end && n < MAX_AIRSPACES) {
+        const char *eol = memchr(p, '\n', (size_t)(end - p));
+        if (eol == NULL) {
+            eol = end;
         }
-        const cJSON *geom = cJSON_GetObjectItem(it, "geometry");
-        const cJSON *coords = geom != NULL ? cJSON_GetObjectItem(geom, "coordinates") : NULL;
-        /* Polygon: coordinates[0] = outer ring of [lon, lat] pairs.
-           MultiPolygon nests one level deeper; take its first polygon. */
-        const cJSON *ring = coords != NULL ? coords->child : NULL;
-        if (ring != NULL && ring->child != NULL && ring->child->child != NULL &&
-            cJSON_IsArray(ring->child->child)) {
-            ring = ring->child;
-        }
-        if (ring == NULL) {
-            continue;
-        }
-        int total = cJSON_GetArraySize((cJSON *)ring);
-        if (total < 4) {
-            continue;
-        }
-        airspace_t *a = &s_asp[n];
-        memset(a, 0, sizeof(*a));
-        a->type = ty->valueint;
-        const cJSON *nm = cJSON_GetObjectItem(it, "name");
-        if (cJSON_IsString(nm)) {
-            strlcpy(a->name, nm->valuestring, sizeof(a->name));
-        }
-        /* decimate long rings down to MAX_ASP_POINTS */
-        int step = (total + MAX_ASP_POINTS - 1) / MAX_ASP_POINTS;
-        if (step < 1) {
-            step = 1;
-        }
-        int idx = 0;
-        for (const cJSON *pt = ring->child; pt != NULL && a->n_points < MAX_ASP_POINTS;
-             pt = pt->next, idx++) {
-            if (idx % step != 0) {
-                continue;
+        const char *t1 = memchr(p, '\t', (size_t)(eol - p));
+        const char *t2 = t1 != NULL ? memchr(t1 + 1, '\t', (size_t)(eol - t1 - 1)) : NULL;
+        if (t2 != NULL) {
+            airspace_t *a = &s_tmp[n];
+            memset(a, 0, sizeof(*a));
+            a->type = atoi(p);
+            size_t nlen = (size_t)(t2 - t1 - 1);
+            if (nlen >= sizeof(a->name)) {
+                nlen = sizeof(a->name) - 1;
             }
-            const cJSON *plon = pt->child;
-            const cJSON *plat = plon != NULL ? plon->next : NULL;
-            if (!cJSON_IsNumber(plon) || !cJSON_IsNumber(plat)) {
-                break;
+            memcpy(a->name, t1 + 1, nlen);
+            const char *q = t2 + 1;
+            while (q < eol && a->n_points < MAX_ASP_POINTS) {
+                char *e1 = NULL, *e2 = NULL;
+                float la = strtof(q, &e1);
+                if (e1 == q || e1 >= eol || *e1 != ',') {
+                    break;
+                }
+                float lo = strtof(e1 + 1, &e2);
+                if (e2 == e1 + 1) {
+                    break;
+                }
+                a->lat[a->n_points] = la;
+                a->lon[a->n_points] = lo;
+                a->n_points++;
+                q = (e2 < eol && *e2 == ';') ? e2 + 1 : eol;
             }
-            a->lat[a->n_points] = (float)plat->valuedouble;
-            a->lon[a->n_points] = (float)plon->valuedouble;
-            a->n_points++;
+            if (a->n_points >= 3 && airspace_type_str(a->type)[0] != '\0') {
+                n++;
+            }
         }
-        if (a->n_points >= 4) {
-            n++;
-        }
+        p = eol + 1;
     }
-    if (root != NULL) {
-        cJSON_Delete(root);
-    }
+    /* renderers read from other tasks: hide, copy, show */
+    s_count = 0;
+    memcpy(s_asp, s_tmp, sizeof(airspace_t) * (size_t)n);
+    s_feed_unix = unix_ts;
     s_count = n;
-    (void)home_lat;
-    (void)home_lon;
-    ESP_LOGI(TAG, "%d airspace outlines cached", n);
+    srcstat_ok(SRC_COLLECTOR);
+    ESP_LOGI(TAG, "%d airspace outlines from the collector", n);
+    cache_save();
 }
 
 void airspace_poll(double home_lat, double home_lon)
 {
-    const settings_t *cfg = settings_get();
-    if (!cfg->airspace_enabled || cfg->openaip_key[0] == '\0') {
-        s_count = 0;
-        return;
-    }
+    (void)home_lat;
+    (void)home_lon;
     if (!s_loaded) {
         s_loaded = true;
-        cache_load(home_lat, home_lon, cfg->openaip_key);
-    }
-    bool moved = geo_haversine_km(s_try_lat, s_try_lon, home_lat, home_lon) > 25.0;
-    bool rekeyed = strcmp(s_try_key, cfg->openaip_key) != 0;
-    if (s_ok && !moved && !rekeyed) {
-        return;
-    }
-    /* after a failed attempt wait out the retry window, even for a new key:
-       hammering the API every poll cycle trips its rate limit */
-    int64_t now = esp_timer_get_time();
-    if (now - s_last_try < RETRY_US) {
-        return;
-    }
-    s_last_try = now;
-    s_try_lat = home_lat;
-    s_try_lon = home_lon;
-    strlcpy(s_try_key, cfg->openaip_key, sizeof(s_try_key));
-
-    if (s_asp == NULL) {
-        s_asp = heap_caps_calloc(MAX_AIRSPACES, sizeof(airspace_t),
-                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (s_asp == NULL) {
-            ESP_LOGW(TAG, "no PSRAM for the %u byte outline table",
-                     (unsigned)(MAX_AIRSPACES * sizeof(airspace_t)));
-            return;
+        if (s_count == 0) {
+            cache_load();
         }
     }
-    char *buf = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (buf == NULL) {
-        ESP_LOGW(TAG, "no PSRAM for the %d KB fetch buffer (free %u, largest %u)",
-                 BUF_SIZE / 1024,
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
-        return;
-    }
-    char url[320];
-    snprintf(url, sizeof(url),
-             "https://api.core.openaip.net/api/airspaces?pos=%.4f,%.4f&dist=%d&limit=60"
-             TYPE_QUERY,
-             home_lat, home_lon, FETCH_DIST_M);
-    if (http_get_to_buffer_hdr(url, buf, BUF_SIZE, NULL,
-                               "x-openaip-api-key", cfg->openaip_key) == ESP_OK) {
-        parse_airspaces(buf, home_lat, home_lon);
-        s_ok = s_count > 0;
-        ESP_LOGI(TAG, "airspace fetch ok, %d outlines kept", s_count);
-        cache_save(home_lat, home_lon, cfg->openaip_key);
-    } else {
-        s_ok = false;
-        ESP_LOGW(TAG, "fetch failed (rate limit, bad key or offline), retry in 30 min");
-    }
-    heap_caps_free(buf);
 }
 
 int airspace_count(void)
 {
-    return s_count;
+    return settings_get()->airspace_enabled ? s_count : 0;
 }
 
 const airspace_t *airspace_get(int idx)
 {
-    return (idx >= 0 && idx < s_count) ? &s_asp[idx] : NULL;
+    return (idx >= 0 && idx < airspace_count()) ? &s_asp[idx] : NULL;
+}
+
+long long airspace_feed_time(void)
+{
+    return s_feed_unix;
 }

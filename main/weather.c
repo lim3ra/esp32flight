@@ -5,6 +5,7 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "http_util.h"
+#include "srcstat.h"
 
 static const char *TAG = "weather";
 
@@ -50,6 +51,7 @@ esp_err_t weather_fetch(double lat, double lon, weather_t *out)
         return ESP_ERR_INVALID_RESPONSE;
     }
     ESP_LOGI(TAG, "%.1f C, code %d, wind %.0f km/h", out->temp_c, out->code, out->wind_kmh);
+    srcstat_ok(SRC_WEATHER);
     return ESP_OK;
 }
 

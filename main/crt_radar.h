@@ -38,6 +38,8 @@ void crt_radar_cycle_rotation(void);
 void crt_radar_set_home(double lat, double lon);
 void crt_radar_set_targets(const aircraft_list_t *list);
 void crt_radar_set_weather(const char *text);
+/* Data sources that are down (srcstat), "" when all answer. */
+void crt_radar_set_warning(const char *text);
 /* KRK airport status from the airport bar (level 0 ok .. 3 unknown). */
 void crt_radar_set_airport(int level, const char *chip, const char *wx,
                            const char *arr, const char *dep);

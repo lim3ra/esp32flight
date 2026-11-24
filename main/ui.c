@@ -32,6 +32,7 @@
 #include "ui_settings.h"
 #include "mqtt_pub.h"
 #include "crt_radar.h"
+#include "srcstat.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -127,6 +128,14 @@ static int s_row_plane_idx[MAX_SHOWN];   /* row -> s_shown index */
 #define VIEW_CRT    1
 #define VIEW_COUNT  2
 static lv_obj_t *s_header;
+static lv_obj_t *s_warn_label;      /* data source down, replaces the status */
+
+static bool s_mqtt_down(void)
+{
+    char tmp[160];
+    srcstat_problems(tmp, sizeof(tmp));
+    return strstr(tmp, "MQTT BROKER") != NULL;
+}
 static int64_t   s_view_since_ms;   /* last view change, for the auto rotation */
 #define CYCLE_MS    6000
 static int        s_view_mode;
@@ -590,6 +599,15 @@ static void build_header(lv_obj_t *scr)
     lv_obj_set_style_text_align(s_status_label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, -UISX(184), 0);
     lv_label_set_text(s_status_label, "...");
+
+    /* same slot as the status, shown instead of it while a source is down */
+    s_warn_label = make_label(hdr, UIFONT(&font_pl_14, &font_pl_8), lv_color_hex(0xff5252));
+    lv_obj_set_width(s_warn_label, UISX(330));
+    lv_label_set_long_mode(s_warn_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(s_warn_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(s_warn_label, LV_ALIGN_RIGHT_MID, -UISX(184), 0);
+    lv_label_set_text(s_warn_label, "");
+    lv_obj_add_flag(s_warn_label, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *gear = lv_btn_create(hdr);
     lv_obj_set_size(gear, UISX(46), UISY(36));
@@ -1285,6 +1303,7 @@ void ui_airport_feed(const char *data, int len)
     memcpy(s_apt_msg, data, (size_t)len);
     s_apt_msg[len] = '\0';
     s_apt_new = true;
+    srcstat_ok(SRC_COLLECTOR);
     xSemaphoreGive(s_apt_lock);
 }
 
@@ -1356,10 +1375,24 @@ static void airport_timer_cb(lv_timer_t *t)
         s_apt_stale_shown = true;
         apt_set_level(3);
         label_set_if_changed(s_apt_chip_lbl, "KRK NO DATA");
-        label_set_if_changed(s_apt_wx, "waiting for airport data");
+        label_set_if_changed(s_apt_wx, srcstat_age_min(SRC_BROKER) < 0 || s_mqtt_down()
+                                           ? "no contact with the MQTT broker"
+                                           : "no contact with krk-airport-collector");
         label_set_if_changed(s_apt_arr, "");
         label_set_if_changed(s_apt_dep, "");
     }
+    /* data sources that went quiet: red line in the header instead of the
+     * usual status, and the same text on the radar console */
+    char probs[160];
+    bool any = srcstat_problems(probs, sizeof(probs)) > 0;
+    if (s_warn_label != NULL) {
+        if (any) {
+            label_set_if_changed(s_warn_label, probs);
+        }
+        set_hidden(s_warn_label, !any);
+        set_hidden(s_status_label, any);
+    }
+    crt_radar_set_warning(any ? probs : "");
     crt_radar_set_airport(s_apt_level, lv_label_get_text(s_apt_chip_lbl),
                           lv_label_get_text(s_apt_wx), lv_label_get_text(s_apt_arr),
                           lv_label_get_text(s_apt_dep));

@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "http_util.h"
+#include "srcstat.h"
 
 static const char *TAG = "rain";
 
@@ -57,6 +58,7 @@ const char *rainviewer_frame_path(void)
     free(buf);
 
     if (fresh[0] != '\0') {
+        srcstat_ok(SRC_RAIN);
         if (strcmp(fresh, s_path) != 0) {
             strlcpy(s_path, fresh, sizeof(s_path));
             s_generation++;

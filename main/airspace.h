@@ -16,8 +16,15 @@ typedef struct {
     float lon[MAX_ASP_POINTS];
 } airspace_t;
 
-/* Fetch when enabled, keyed and due (moved / never fetched). Rate-limited. */
+/* Restores the last collector feed from flash once; the outlines themselves
+ * come from airspace_feed (krk-airport-collector over MQTT). */
 void airspace_poll(double home_lat, double home_lon);
+
+/* A complete krk-airport/airspaces message, from the MQTT task. */
+void airspace_feed(const char *data, int len);
+
+/* Collector timestamp (unix) of the outlines shown, 0 = none. */
+long long airspace_feed_time(void);
 
 int  airspace_count(void);
 const airspace_t *airspace_get(int idx);

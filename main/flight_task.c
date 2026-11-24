@@ -17,6 +17,7 @@
 #include "sdkconfig.h"
 
 #include "flight_data.h"
+#include "srcstat.h"
 #include "geolocate.h"
 #include "geocode.h"
 #include "airlines.h"
@@ -517,6 +518,7 @@ static void flight_task(void *arg)
         }
         if (err == ESP_OK) {
             consecutive_failures = 0;
+            srcstat_ok(SRC_ADSB);
 
             const settings_t *cfg = settings_get();
             if (cfg->hide_ground ||

@@ -51,6 +51,7 @@ idf_component_register(
         "ui.c"
         "crt_radar.c"
         "sysmon.c"
+        "srcstat.c"
         "ui_settings.c"
         "web_server.c"
         "font_pl_8.c"

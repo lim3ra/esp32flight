@@ -150,6 +150,7 @@ static char     s_rain_when[8] = "--:--";
 static int      s_rain_cells = -1;
 
 static char s_weather[96];
+static char s_warning[160];
 static int  s_apt_level = 3;
 static char s_apt_chip[40], s_apt_wx[200], s_apt_arr[100], s_apt_dep[100];
 
@@ -1556,7 +1557,9 @@ static void console_update(void)
     term_put(0, TC_TXT, "PPI SURVEILLANCE  EPKK%*s", TERM_COLS - 22, clk);
     term_put(1, TC_DIM, "RNG %d NM  ROT %.1f S  TGT %d  %s",
              settings_get()->radius_nm, REV_MS / 1000.0, n, s_frame_stat);
-    if (s_rain_cells < 0) {
+    if (s_warning[0]) {
+        term_put(2, TC_RED, "! %s", s_warning);
+    } else if (s_rain_cells < 0) {
         term_put(2, TC_DIM, "WX ----  %s", s_weather);
     } else {
         term_put(2, TC_DIM, "WX %s %s  %s", s_rain_when, s_rain_cells ? "ECHO" : "CLEAR", s_weather);
@@ -1865,6 +1868,11 @@ void crt_radar_set_home(double lat, double lon)
 void crt_radar_set_weather(const char *text)
 {
     strlcpy(s_weather, text, sizeof(s_weather));
+}
+
+void crt_radar_set_warning(const char *text)
+{
+    strlcpy(s_warning, text, sizeof(s_warning));
 }
 
 void crt_radar_set_airport(int level, const char *chip, const char *wx,
