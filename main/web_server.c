@@ -24,6 +24,7 @@
 #include "airports.h"
 #include "ui.h"
 #include "crt_radar.h"
+#include "sysmon.h"
 #include "ui_settings.h"
 #include "flight_model.h"
 #include "waveshare_rgb_lcd_port.h"
@@ -1130,7 +1131,7 @@ static esp_err_t metrics_get(httpd_req_t *req)
 {
     AUTH_GUARD(req);
     /* scalars pushed by flight_task: no JSON round-trip per scrape */
-    char out[512];
+    char out[960];
     int count = s_metric.count, unique = s_metric.unique, alt = s_metric.alt;
     double nearest = s_metric.nearest_km;
     snprintf(out, sizeof(out),
@@ -1159,6 +1160,21 @@ static esp_err_t metrics_get(httpd_req_t *req)
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
              (int)esp_reset_reason(),
              (long long)(esp_timer_get_time() / 1000000LL));
+    sysmon_t sm;
+    sysmon_get(&sm);
+    if (sm.valid) {
+        size_t n = strlen(out);
+        snprintf(out + n, sizeof(out) - n,
+                 "esp32flight_chip_temp_celsius %.1f\n"
+                 "esp32flight_chip_temp_max_celsius %.1f\n"
+                 "esp32flight_cpu_load_percent{core=\"0\"} %d\n"
+                 "esp32flight_cpu_load_percent{core=\"1\"} %d\n"
+                 "esp32flight_cpu_load_max_percent{core=\"0\"} %d\n"
+                 "esp32flight_cpu_load_max_percent{core=\"1\"} %d\n"
+                 "esp32flight_wifi_rssi_dbm %d\n",
+                 sm.chip_temp_c, sm.chip_temp_max_c, sm.cpu_load_pct[0], sm.cpu_load_pct[1],
+                 sm.cpu_load_max_pct[0], sm.cpu_load_max_pct[1], sm.wifi_rssi_dbm);
+    }
     httpd_resp_set_type(req, "text/plain; version=0.0.4");
     return httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
 }

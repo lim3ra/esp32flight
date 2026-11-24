@@ -14,6 +14,7 @@
 #include "routes.h"
 #include "runways.h"
 #include "settings.h"
+#include "sysmon.h"
 #include "tilemap.h"
 #include "tz.h"
 
@@ -1560,7 +1561,16 @@ static void console_update(void)
     } else {
         term_put(2, TC_DIM, "WX %s %s  %s", s_rain_when, s_rain_cells ? "ECHO" : "CLEAR", s_weather);
     }
-    term_put(3, TC_DIM, "%.*s", TERM_COLS, "----------------------------------------------------");
+    sysmon_t sm;
+    sysmon_get(&sm);
+    if (sm.valid) {
+        term_put(3, sm.chip_temp_c >= 70 ? TC_AMBER : TC_DIM,
+                 "SYS %.0fC (MAX %.0fC)  CPU0 %d%%  CPU1 %d%%  RSSI %d",
+                 sm.chip_temp_c, sm.chip_temp_max_c, sm.cpu_load_pct[0], sm.cpu_load_pct[1],
+                 sm.wifi_rssi_dbm);
+    } else {
+        term_put(3, TC_DIM, "SYS ---");
+    }
 
     const blip_t *sel = NULL;
     for (int i = 0; i < MAX_AIRCRAFT && s_sel_hex[0]; i++) {

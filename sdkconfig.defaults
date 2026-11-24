@@ -73,3 +73,7 @@ CONFIG_LV_MEM_CUSTOM_INCLUDE="esp_heap_caps.h"
 # world map and detail panel came out, the internal minimum sits at 30-40 KB,
 # so the same 3.5 KB is now affordable.
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# per-core load for sysmon.c (idle-task run time against esp_timer)
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y

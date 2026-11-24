@@ -12,6 +12,7 @@
 #include "logos.h"
 #include "eventlog.h"
 #include "settings.h"
+#include "sysmon.h"
 #include "input_ctl.h"
 #include "tilemap.h"
 #include "ui.h"
@@ -80,6 +81,7 @@ void app_main(void)
     }
 
     input_ctl_init();
+    sysmon_start();
     web_server_start();
     flight_task_start();
 }

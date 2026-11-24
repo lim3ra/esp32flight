@@ -16,6 +16,7 @@
 static const char *TAG = "mqtt";
 
 #define STATE_TOPIC     "esp32flight/state"
+#define HEALTH_TOPIC    "esp32flight/health"
 #define BL_CONFIG_TOPIC "homeassistant/light/esp32flight_backlight/config"
 #define BL_STATE_TOPIC  "esp32flight/backlight/state"
 #define BL_BRI_TOPIC    "esp32flight/backlight/brightness"
@@ -118,6 +119,41 @@ static void publish_discovery(void)
     };
     for (size_t i = 0; i < sizeof(k_retired) / sizeof(k_retired[0]); i++) {
         esp_mqtt_client_publish(s_client, k_retired[i], "", 0, 1, 1);
+    }
+    /* board health from sysmon.c, diagnostic entities on their own topic */
+    static const struct {
+        const char *object_id, *name, *key, *unit, *dev_class;
+    } health[] = {
+        { "chip_temp", "Chip temperature", "chip_temp", "°C", "temperature" },
+        { "chip_temp_max", "Chip temperature max", "chip_temp_max", "°C", "temperature" },
+        { "cpu0_load", "CPU core 0 load", "cpu0", "%", NULL },
+        { "cpu1_load", "CPU core 1 load", "cpu1", "%", NULL },
+        { "wifi_rssi", "Wi-Fi signal", "rssi", "dBm", "signal_strength" },
+        { "heap_int_free", "Internal heap free", "heap_int_free", "B", "data_size" },
+        { "heap_int_min", "Internal heap minimum", "heap_int_min", "B", "data_size" },
+        { "psram_free", "PSRAM free", "psram_free", "B", "data_size" },
+        { "uptime", "Uptime", "uptime_h", "h", "duration" },
+    };
+    for (size_t i = 0; i < sizeof(health) / sizeof(health[0]); i++) {
+        char topic[96], payload[640];
+        snprintf(topic, sizeof(topic),
+                 "homeassistant/sensor/esp32flight_%s/config", health[i].object_id);
+        snprintf(payload, sizeof(payload),
+                 "{\"name\":\"%s\",\"state_topic\":\"" HEALTH_TOPIC "\","
+                 "\"value_template\":\"{{ value_json.%s }}\","
+                 "\"unit_of_measurement\":\"%s\",%s%s%s"
+                 "\"state_class\":\"measurement\",\"entity_category\":\"diagnostic\","
+                 "\"expire_after\":300,"
+                 "\"unique_id\":\"esp32flight_%s\","
+                 "\"device\":{\"identifiers\":[\"esp32flight\"],"
+                 "\"name\":\"esp32flight\",\"manufacturer\":\"theqkash\","
+                 "\"model\":\"%s\"}}",
+                 health[i].name, health[i].key, health[i].unit,
+                 health[i].dev_class ? "\"device_class\":\"" : "",
+                 health[i].dev_class ? health[i].dev_class : "",
+                 health[i].dev_class ? "\"," : "",
+                 health[i].object_id, model);
+        esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
     }
     for (size_t i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
         char topic[96], payload[512];
@@ -272,6 +308,15 @@ void mqtt_pub_backlight_on(bool on)
 #else
     (void)on;
 #endif
+}
+
+/* Called from the esp_timer task: enqueue, never block on the network. */
+void mqtt_pub_health(const char *json)
+{
+    if (s_client == NULL || !s_connected) {
+        return;
+    }
+    esp_mqtt_client_enqueue(s_client, HEALTH_TOPIC, json, 0, 0, 0, true);
 }
 
 void mqtt_pub_state(const char *json)
